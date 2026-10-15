@@ -567,7 +567,14 @@ canvas.addEventListener('mousedown', e => {
     canvas.style.cursor = 'grabbing';
     return;
   }
-  if (tool === 'calibrate') { handleCalibClick(wpx, wpy); return; }
+  if (tool === 'calibrate') {
+    if (calibClicks.length === 0) {
+      const end = hitCalibEndpoint(wpx, wpy);
+      if (end >= 0) { beginCalibDrag(end, sx, sy); return; }
+    }
+    handleCalibClick(wpx, wpy);
+    return;
+  }
   if (tool === 'draw-bed') { onDrawClick(wpx, wpy); return; }
 
   // Check rotation handle of selected item first
@@ -631,6 +638,10 @@ canvas.addEventListener('mousemove', e => {
   const sx = e.clientX - r.left, sy = e.clientY - r.top;
   const { x: wpx, y: wpy } = screenToWorld(sx, sy);
 
+  if (calibDrag) {
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
   if (isRotating) {
     const selItem = beds.find(b => b.id === selectedId) || obstacles.find(o => o.id === selectedId);
     if (selItem) {
@@ -679,7 +690,8 @@ canvas.addEventListener('mousemove', e => {
     draw();
   } else if (tool === 'calibrate') {
     if (plotImage && plot.widthPx) calibHover = worldToImagePixel(wpx, wpy, plot.feetPerPixel > 0);
-    canvas.style.cursor = 'crosshair';
+    const overEnd = calibClicks.length === 0 && hitCalibEndpoint(wpx, wpy) >= 0;
+    canvas.style.cursor = overEnd ? 'grab' : 'crosshair';
     if (calibClicks.length === 1) draw();
   } else if (tool === 'pan') {
     canvas.style.cursor = 'grab';
@@ -688,7 +700,22 @@ canvas.addEventListener('mousemove', e => {
   }
 });
 
+document.addEventListener('mousemove', e => {
+  if (!calibDrag) return;
+  const r = canvas.getBoundingClientRect();
+  const sx = e.clientX - r.left, sy = e.clientY - r.top;
+  const { x: wpx, y: wpy } = screenToWorld(sx, sy);
+  moveCalibDrag(wpx, wpy, sx, sy);
+  canvas.style.cursor = 'grabbing';
+});
+
+document.addEventListener('mouseup', e => {
+  if (!calibDrag || e.target === canvas) return;
+  finishCalibDrag();
+});
+
 canvas.addEventListener('mouseup', () => {
+  if (calibDrag) finishCalibDrag();
   if (isRotating) { isRotating = false; saveData(); }
   if (dragging && isPolygon(dragging) && dragMode === 'vertex') dragging.plantGrid = null;
   dragging  = null;
@@ -730,6 +757,7 @@ canvas.addEventListener('mouseup', () => {
 
     if (e.touches.length === 2) {
       // Begin pinch — cancel any ongoing item drag
+      if (calibDrag) { calibDrag = null; draw(); }
       dragging = null; isPanning = false; touchHit = null;
       pinchDist = getTouchDist(e.touches);
       pinchMid  = getTouchMid(e.touches, r);
@@ -749,6 +777,16 @@ canvas.addEventListener('mouseup', () => {
       isPanning = true;
       panStart = { x: sx - viewX, y: sy - viewY };
       return;
+    }
+    if (tool === 'calibrate' && calibClicks.length === 0) {
+      const end = hitCalibEndpoint(wpx, wpy, 14 / viewZoom);
+      if (end >= 0) {
+        beginCalibDrag(end, sx, sy);
+        touchHit = null;
+        dragging = null;
+        isPanning = false;
+        return;
+      }
     }
     if (tool === 'calibrate' || tool === 'draw-bed') {
       touchHit = null;
@@ -837,6 +875,13 @@ canvas.addEventListener('mouseup', () => {
     const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
     if (Math.sqrt(dx*dx + dy*dy) > 5) touchMoved = true;
 
+    if (calibDrag) {
+      const sx = t.clientX - r.left, sy = t.clientY - r.top;
+      const { x: wpx, y: wpy } = screenToWorld(sx, sy);
+      moveCalibDrag(wpx, wpy, sx, sy);
+      return;
+    }
+
     if (isRotating) {
       const selItem = beds.find(b => b.id === selectedId) || obstacles.find(o => o.id === selectedId);
       if (selItem) {
@@ -862,6 +907,13 @@ canvas.addEventListener('mouseup', () => {
   canvas.addEventListener('touchend', e => {
     e.preventDefault();
     pinchDist = null;
+    if (calibDrag) {
+      finishCalibDrag();
+      touchHit = null;
+      isPanning = false;
+      dragging = null;
+      return;
+    }
     if (!touchMoved && touchStart && (tool === 'calibrate' || tool === 'draw-bed')) {
       const rr = canvas.getBoundingClientRect();
       const { x: wpx, y: wpy } = screenToWorld(touchStart.x - rr.left, touchStart.y - rr.top);
@@ -936,11 +988,12 @@ document.addEventListener('keydown', e => {
     undoLast();
     return;
   }
-  if (e.key === 'Escape' && (draftPoints.length || calibClicks.length)) {
+  if (e.key === 'Escape' && (draftPoints.length || calibClicks.length || calibDrag)) {
     draftPoints = [];
     draftCursor = null;
     calibClicks = [];
     calibHover = null;
+    calibDrag = null;
     draw();
     return;
   }

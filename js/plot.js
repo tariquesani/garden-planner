@@ -63,7 +63,7 @@ function setTool(name) {
   }
   tool = name;
   if (name !== 'draw-bed') { draftPoints = []; draftCursor = null; }
-  if (name !== 'calibrate') { calibClicks = []; calibHover = null; }
+  if (name !== 'calibrate') { calibClicks = []; calibHover = null; calibDrag = null; }
   document.querySelectorAll('.tool-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tool === name);
   });
@@ -183,6 +183,77 @@ function handleCalibClick(wx, wy) {
   const lengthFt = parseFloat(raw);
   if (!(lengthFt > 0)) { alert('Enter a length greater than 0.'); draw(); return; }
   applyCalibration({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, lengthFt });
+}
+
+function hitCalibEndpoint(wx, wy, radiusWorld) {
+  const c = plot.calibration;
+  if (!c || !plot.widthPx) return -1;
+  const r = radiusWorld == null ? 12 / viewZoom : radiusWorld;
+  const r2 = r * r;
+  const pts = [imagePixelToWorld(c.x1, c.y1), imagePixelToWorld(c.x2, c.y2)];
+  let best = -1, bestD = r2;
+  pts.forEach((p, i) => {
+    const d = (wx - p.x) ** 2 + (wy - p.y) ** 2;
+    if (d <= bestD) { bestD = d; best = i; }
+  });
+  return best;
+}
+
+function beginCalibDrag(end, sx, sy) {
+  const c = plot.calibration;
+  if (!c) return;
+  calibClicks = [];
+  calibHover = null;
+  const x = end === 0 ? c.x1 : c.x2;
+  const y = end === 0 ? c.y1 : c.y2;
+  calibDrag = { end, x, y, ox: x, oy: y, sx, sy, moved: false };
+  canvas.style.cursor = 'grabbing';
+  draw();
+}
+
+function moveCalibDrag(wpx, wpy, sx, sy) {
+  if (!calibDrag) return;
+  if (!calibDrag.moved) {
+    const dx = sx - calibDrag.sx, dy = sy - calibDrag.sy;
+    if (dx * dx + dy * dy < 16) return;
+    calibDrag.moved = true;
+  }
+  const p = worldToImagePixel(wpx, wpy, plot.feetPerPixel > 0);
+  calibDrag.x = p.x;
+  calibDrag.y = p.y;
+  draw();
+}
+
+function finishCalibDrag() {
+  if (!calibDrag) return;
+  const drag = calibDrag;
+  calibDrag = null;
+  const c = plot.calibration;
+  if (!drag.moved || !c) { draw(); return; }
+  const x1 = drag.end === 0 ? drag.x : c.x1;
+  const y1 = drag.end === 0 ? drag.y : c.y1;
+  const x2 = drag.end === 1 ? drag.x : c.x2;
+  const y2 = drag.end === 1 ? drag.y : c.y2;
+  if (lineLengthPx(x1, y1, x2, y2) < 2 || Math.hypot(drag.x - drag.ox, drag.y - drag.oy) < 0.5) {
+    draw();
+    return;
+  }
+  const raw = prompt('How long is this line, in feet?', String(c.lengthFt));
+  if (raw == null) { draw(); return; }
+  const lengthFt = parseFloat(raw);
+  if (!(lengthFt > 0)) { alert('Enter a length greater than 0.'); draw(); return; }
+  applyCalibration({ x1, y1, x2, y2, lengthFt });
+}
+
+function calibLineEnds() {
+  const c = plot.calibration;
+  const a = { x: c.x1, y: c.y1 };
+  const b = { x: c.x2, y: c.y2 };
+  if (calibDrag && calibDrag.moved) {
+    if (calibDrag.end === 0) { a.x = calibDrag.x; a.y = calibDrag.y; }
+    else { b.x = calibDrag.x; b.y = calibDrag.y; }
+  }
+  return [a, b];
 }
 
 function adoptPlotDataUrl(dataUrl, opts = {}) {
@@ -340,7 +411,7 @@ function updatePolyPanel() {
   }
 }
 
-function drawCalibLine(a, b, label) {
+function drawCalibLine(a, b, label, activeEnd, showHandles) {
   const p1 = imagePixelToWorld(a.x, a.y);
   const p2 = imagePixelToWorld(b.x, b.y);
   ctx.beginPath();
@@ -351,11 +422,18 @@ function drawCalibLine(a, b, label) {
   ctx.setLineDash([6 / viewZoom, 4 / viewZoom]);
   ctx.stroke();
   ctx.setLineDash([]);
-  [p1, p2].forEach(p => {
+  [p1, p2].forEach((p, i) => {
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 5 / viewZoom, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, (i === activeEnd ? 7 : 5) / viewZoom, 0, Math.PI * 2);
     ctx.fillStyle = '#ff9f0a';
     ctx.fill();
+    if (showHandles) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 9 / viewZoom, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff9f0a';
+      ctx.lineWidth = 1.5 / viewZoom;
+      ctx.stroke();
+    }
   });
   if (label) {
     ctx.fillStyle = '#7a3e00';
@@ -384,10 +462,13 @@ function drawDraft() {
     });
   }
   if (plot.calibration && plot.widthPx) {
+    const [a, b] = calibLineEnds();
+    const draggingEnd = calibDrag && calibDrag.moved;
     drawCalibLine(
-      { x: plot.calibration.x1, y: plot.calibration.y1 },
-      { x: plot.calibration.x2, y: plot.calibration.y2 },
-      `${plot.calibration.lengthFt} ft`
+      a, b,
+      `${plot.calibration.lengthFt} ft`,
+      draggingEnd ? calibDrag.end : -1,
+      tool === 'calibrate' && calibClicks.length === 0
     );
   }
   if (calibClicks.length === 1 && calibHover) drawCalibLine(calibClicks[0], calibHover, '');

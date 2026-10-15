@@ -9,6 +9,7 @@ let plotDataUrl = null;
 let tool = 'select';
 let calibClicks = [];
 let calibHover = null;
+let calibDrag = null;
 let draftPoints = [];
 let draftCursor = null;
 let lastDrawTap = 0;
