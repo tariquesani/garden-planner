@@ -14,6 +14,7 @@ let draftCursor = null;
 let lastDrawTap = 0;
 let dragMode = null;
 let dragVertex = -1;
+let selectedVertex = -1;
 let dragOriginPoints = null;
 let dragStartFeet = null;
 let selectedId = null;

@@ -228,16 +228,53 @@ function drawPolygonBed(b) {
   ctx.restore();
 
   if (sel) {
-    pts.forEach(p => {
+    pts.forEach((p, i) => {
+      const active = i === selectedVertex;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 6 / viewZoom, 0, Math.PI * 2);
-      ctx.fillStyle = '#ff9f0a';
+      ctx.arc(p.x, p.y, (active ? 8 : 6) / viewZoom, 0, Math.PI * 2);
+      ctx.fillStyle = active ? '#fff' : '#ff9f0a';
       ctx.fill();
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 1 / viewZoom;
+      ctx.strokeStyle = active ? '#ff9f0a' : '#fff';
+      ctx.lineWidth = (active ? 2 : 1) / viewZoom;
       ctx.stroke();
     });
+    drawVertexEdgeLabels(b);
   }
+}
+
+function drawVertexEdgeLabels(b) {
+  const n = b.points.length;
+  if (selectedVertex < 0 || selectedVertex >= n) return;
+  const i = selectedVertex;
+  const prev = b.points[(i - 1 + n) % n];
+  const cur = b.points[i];
+  const next = b.points[(i + 1) % n];
+  [ [prev, cur], [cur, next] ].forEach(([a, c]) => {
+    ctx.beginPath();
+    ctx.moveTo(ft(a.x), ft(a.y));
+    ctx.lineTo(ft(c.x), ft(c.y));
+    ctx.strokeStyle = '#1f2933';
+    ctx.lineWidth = 3 / viewZoom;
+    ctx.stroke();
+    const text = formatFeetInches(Math.hypot(c.x - a.x, c.y - a.y));
+    const mx = ft((a.x + c.x) / 2);
+    const my = ft((a.y + c.y) / 2);
+    ctx.font = `bold ${Math.round(13 / viewZoom)}px sans-serif`;
+    const pad = 4 / viewZoom;
+    const w = ctx.measureText(text).width + pad * 2;
+    const h = 18 / viewZoom;
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.fillRect(mx - w / 2, my - h / 2, w, h);
+    ctx.strokeStyle = '#1f2933';
+    ctx.lineWidth = 1 / viewZoom;
+    ctx.strokeRect(mx - w / 2, my - h / 2, w, h);
+    ctx.fillStyle = '#1f2933';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, mx, my);
+  });
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
 }
 
 function drawBed(b) {
@@ -542,7 +579,10 @@ canvas.addEventListener('mousedown', e => {
       dragging = selItem;
       dragMode = 'vertex';
       dragVertex = vi;
+      selectedVertex = vi;
       canvas.style.cursor = 'grabbing';
+      updatePolyPanel();
+      draw();
       return;
     }
   }
@@ -566,8 +606,10 @@ canvas.addEventListener('mousedown', e => {
       if (vi >= 0) {
         dragMode = 'vertex';
         dragVertex = vi;
+        selectedVertex = vi;
       } else {
         dragMode = 'move';
+        selectedVertex = -1;
         dragOriginPoints = hit.item.points.map(p => ({ x: p.x, y: p.y }));
         dragStartFeet = { x: snap(wpx / SCALE), y: snap(wpy / SCALE) };
       }
@@ -652,6 +694,7 @@ canvas.addEventListener('mouseup', () => {
   dragging  = null;
   dragMode = null;
   dragVertex = -1;
+  if (selectedId && beds.some(b => b.id === selectedId && isPolygon(b))) updatePolyPanel();
   dragOriginPoints = null;
   isPanning = false;
   canvas.style.cursor = (tool === 'draw-bed' || tool === 'calibrate') ? 'crosshair' : (tool === 'pan' ? 'grab' : 'default');
@@ -723,7 +766,10 @@ canvas.addEventListener('mouseup', () => {
         dragging = selItem;
         dragMode = 'vertex';
         dragVertex = vi;
+        selectedVertex = vi;
         touchHit = { type: 'bed', item: selItem };
+        updatePolyPanel();
+        draw();
         return;
       }
     }
@@ -741,9 +787,17 @@ canvas.addEventListener('mouseup', () => {
       saveHistory();
       dragging = touchHit.item;
       if (isPolygon(touchHit.item)) {
-        dragMode = 'move';
-        dragOriginPoints = touchHit.item.points.map(p => ({ x: p.x, y: p.y }));
-        dragStartFeet = { x: snap(wpx / SCALE), y: snap(wpy / SCALE) };
+        const vi = hitVertex(wpx, wpy, touchHit.item.points, 14 / viewZoom);
+        if (vi >= 0) {
+          dragMode = 'vertex';
+          dragVertex = vi;
+          selectedVertex = vi;
+        } else {
+          dragMode = 'move';
+          selectedVertex = -1;
+          dragOriginPoints = touchHit.item.points.map(p => ({ x: p.x, y: p.y }));
+          dragStartFeet = { x: snap(wpx / SCALE), y: snap(wpy / SCALE) };
+        }
       } else {
         dragMode = 'item';
         dragOff  = { x: wpx - ft(touchHit.item.x), y: wpy - ft(touchHit.item.y) };

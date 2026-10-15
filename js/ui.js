@@ -1,5 +1,6 @@
 // ─── Selection ────────────────────────────────────────────────────────────────
 function select(id, type, openPanel = true) {
+  if (id !== selectedId) selectedVertex = -1;
   selectedId = id;
   const panel = document.getElementById('rightPanel');
   if (id && openPanel) { panel.classList.add('open'); syncPanel(); }

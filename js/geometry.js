@@ -1,3 +1,12 @@
+function formatFeetInches(feet) {
+  const inches = Math.max(0, Math.round(Math.abs(feet) * 12));
+  const f = Math.floor(inches / 12);
+  const i = inches % 12;
+  if (f && i) return `${f}'${i}"`;
+  if (f) return `${f}'`;
+  return `${i}"`;
+}
+
 function ft(v) { return v * SCALE; }
 function px(v) { return v / SCALE; }
 function snap(v) {

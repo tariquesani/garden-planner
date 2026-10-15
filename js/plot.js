@@ -321,7 +321,18 @@ function updatePolyPanel() {
   const stats = document.getElementById('polyStats');
   const note = document.getElementById('neighborNote');
   if (!item || !isPolygon(item) || !stats) return;
-  stats.textContent = `${bedArea(item).toFixed(1)} sq ft · ${item.points.length} corners`;
+  let edgeNote = '';
+  const n = item.points.length;
+  if (selectedVertex >= 0 && selectedVertex < n) {
+    const i = selectedVertex;
+    const prev = item.points[(i - 1 + n) % n];
+    const cur = item.points[i];
+    const next = item.points[(i + 1) % n];
+    const a = formatFeetInches(Math.hypot(cur.x - prev.x, cur.y - prev.y));
+    const b = formatFeetInches(Math.hypot(next.x - cur.x, next.y - cur.y));
+    edgeNote = ` · edges ${a} and ${b}`;
+  }
+  stats.textContent = `${bedArea(item).toFixed(1)} sq ft · ${item.points.length} corners${edgeNote}`;
   const msg = neighborWarning(item);
   if (note) {
     note.style.display = msg ? 'block' : 'none';
