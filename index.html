@@ -179,6 +179,19 @@
     }
     .zoom-controls button:hover { background: #e0eee0; }
     .snap-toggle { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #4a6b4b; }
+    .tool-group { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+    .tool-btn {
+      background: #f0f4f0; border: 1px solid #c6d9c6; color: #2d3a2e;
+      height: 28px; padding: 0 8px; border-radius: 4px; font-size: 11px; cursor: pointer;
+    }
+    .tool-btn:hover { background: #e0eee0; }
+    .tool-btn.active { background: #2d6a30; color: #fff; border-color: #2d6a30; }
+    .tool-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .plot-note { font-size: 11px; color: #4a6b4b; line-height: 1.4; margin-top: 6px; }
+    .igrid-cell.outside {
+      background: repeating-linear-gradient(45deg, rgba(0,0,0,0.18), rgba(0,0,0,0.18) 4px, rgba(0,0,0,0.05) 4px, rgba(0,0,0,0.05) 8px);
+      cursor: not-allowed;
+    }
 
     .canvas-area {
       flex: 1; overflow: hidden; position: relative;
@@ -447,8 +460,9 @@
         padding: 6px 10px; background: #fafdf8;
       }
       .toolbar-hint { display: none; }
+      .toolbar { flex-wrap: wrap; }
       /* Push canvas down so it doesn't hide under the fixed toolbar */
-      .main { padding-top: 48px; }
+      .main { padding-top: 78px; }
       .canvas-area { padding: 0; }
 
       /* ☰ button — always show, always tappable */
@@ -506,6 +520,12 @@
       </div>
       <button class="btn btn-secondary" onclick="applyGardenSize()">Apply Size</button>
       <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px">
+        <button class="btn btn-secondary" onclick="uploadPlot()">Upload plot</button>
+        <button class="btn btn-secondary" onclick="loadSamplePlot()">Load sample plot</button>
+        <p class="plot-note" id="calibReadout">No plot photo loaded.</p>
+        <label class="snap-toggle" style="margin-top:2px">
+          <input type="checkbox" id="embedPhoto"> Include photo in save file
+        </label>
         <button class="btn btn-primary" onclick="addBed()">+ Add Bed</button>
         <button class="btn btn-secondary" onclick="addGroundArea()">🌍 Add Ground Area</button>
         <button class="btn btn-secondary" onclick="addPot()">🪴 Add Pot</button>
@@ -570,7 +590,16 @@
   <div class="main">
     <div class="toolbar">
       <button class="btn btn-secondary menu-btn" onclick="openSidebar()" title="Menu">☰ Menu</button>
-      <span class="toolbar-hint">🖱️ Drag to move &nbsp;|&nbsp; Click to select &nbsp;|&nbsp; Double-click to rename &nbsp;|&nbsp; Edit size/plants in the right panel</span>
+      <div class="tool-group">
+        <button type="button" class="tool-btn active" data-tool="select" onclick="setTool('select')">Select</button>
+        <button type="button" class="tool-btn" data-tool="pan" onclick="setTool('pan')">Pan</button>
+        <button type="button" class="tool-btn" data-tool="calibrate" onclick="setTool('calibrate')">Calibrate</button>
+        <button type="button" class="tool-btn" id="tool-draw" data-tool="draw-bed" onclick="setTool('draw-bed')">Draw bed</button>
+      </div>
+      <label class="snap-toggle" title="New polygon beds are ground areas instead of raised beds">
+        <input type="checkbox" id="drawGroundToggle"> Ground
+      </label>
+      <span class="toolbar-hint">Select to move &nbsp;|&nbsp; Calibrate a known length &nbsp;|&nbsp; Draw bed by clicking corners &nbsp;|&nbsp; Double-click to close or rename</span>
       <div class="zoom-controls">
         <button onclick="adjustZoom(1.2)" title="Zoom in">＋</button>
         <button onclick="fitView();draw()" title="Fit to screen">⤢</button>
@@ -615,6 +644,10 @@
           <input type="number" id="propH" min="1" max="40" step="0.5" oninput="updateProp('h', +this.value)">
         </div>
       </div>
+      <div id="polySection" style="display:none">
+        <p class="plot-note" id="polyStats"></p>
+        <p class="plot-note" id="neighborNote" style="display:none;color:#92400e"></p>
+      </div>
       <div class="field" id="potSection">
         <label>Diameter</label>
         <select id="propDiam" onchange="updatePotDiam(+this.value)">
@@ -634,7 +667,7 @@
           <option value="18">18 in — 3× 2×6 (maximum)</option>
         </select>
       </div>
-      <div class="field-row">
+      <div class="field-row" id="posRow">
         <div class="field">
           <label>X from left (ft)</label>
           <input type="number" id="propX" min="0" step="0.5" oninput="updateProp('x', +this.value)">
@@ -790,6 +823,19 @@ const SCALE = 36; // px per foot
 const GRID  = 0.5; // snap resolution in feet
 
 let garden   = { width: 20, height: 18 };
+let plot = { plotId: null, widthPx: 0, heightPx: 0, calibration: null, feetPerPixel: 0 };
+let plotImage = null;
+let plotDataUrl = null;
+let tool = 'select';
+let calibClicks = [];
+let calibHover = null;
+let draftPoints = [];
+let draftCursor = null;
+let lastDrawTap = 0;
+let dragMode = null;
+let dragVertex = -1;
+let dragOriginPoints = null;
+let dragStartFeet = null;
 let selectedId = null;
 let dragging   = null;
 let dragOff    = { x: 0, y: 0 };
@@ -816,6 +862,13 @@ function saveHistory() {
     beds:      JSON.parse(JSON.stringify(beds)),
     obstacles: JSON.parse(JSON.stringify(obstacles)),
     garden:    { ...garden },
+    plot: {
+      plotId: plot.plotId,
+      widthPx: plot.widthPx,
+      heightPx: plot.heightPx,
+      calibration: plot.calibration ? { ...plot.calibration } : null,
+      feetPerPixel: plot.feetPerPixel || 0,
+    },
     nextId,
   });
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
@@ -828,11 +881,15 @@ function undoLast() {
   obstacles = snap.obstacles;
   garden    = { ...snap.garden };
   nextId    = snap.nextId;
+  if (snap.plot) restorePlotMeta(snap.plot);
+  document.getElementById('gardenWidth').value  = Math.round(garden.width * 10) / 10;
+  document.getElementById('gardenHeight').value = Math.round(garden.height * 10) / 10;
   _propHistorySaved = false;
   // If the previously selected item no longer exists, deselect it
   const stillExists = beds.find(b => b.id === selectedId) || obstacles.find(o => o.id === selectedId);
   if (!stillExists) select(null);
   else syncPanel();
+  updateCalibReadout();
   renderLists(); draw();
 }
 
@@ -957,6 +1014,562 @@ function adjustZoom(factor) {
   draw();
 }
 
+// ─── Geometry ─────────────────────────────────────────────────────────────────
+function isPolygon(item) {
+  return !!(item && item.shape === 'polygon' && Array.isArray(item.points) && item.points.length >= 3);
+}
+
+function lineLengthPx(x1, y1, x2, y2) {
+  return Math.hypot(x2 - x1, y2 - y1);
+}
+
+function feetPerPixelFromLine(x1, y1, x2, y2, lengthFt) {
+  const len = lineLengthPx(x1, y1, x2, y2);
+  if (len < 1) return 0;
+  return lengthFt / len;
+}
+
+function shoelaceArea(points) {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length;
+    sum += points[i].x * points[j].y - points[j].x * points[i].y;
+  }
+  return Math.abs(sum) / 2;
+}
+
+function pointInPolygon(x, y, points) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const xi = points[i].x, yi = points[i].y;
+    const xj = points[j].x, yj = points[j].y;
+    const denom = (yj - yi) || 1e-12;
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / denom + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function polygonBounds(points) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  points.forEach(p => {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  });
+  return { x: minX, y: minY, w: Math.max(0.1, maxX - minX), h: Math.max(0.1, maxY - minY) };
+}
+
+function syncPolygonBounds(bed) {
+  const b = polygonBounds(bed.points);
+  bed.x = b.x; bed.y = b.y; bed.w = b.w; bed.h = b.h;
+}
+
+function polygonCentroid(points) {
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length;
+    const cross = points[i].x * points[j].y - points[j].x * points[i].y;
+    a += cross;
+    cx += (points[i].x + points[j].x) * cross;
+    cy += (points[i].y + points[j].y) * cross;
+  }
+  a *= 0.5;
+  if (Math.abs(a) < 1e-9) {
+    const b = polygonBounds(points);
+    return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  }
+  return { x: cx / (6 * a), y: cy / (6 * a) };
+}
+
+function polygonLabelPoint(points) {
+  const c = polygonCentroid(points);
+  if (pointInPolygon(c.x, c.y, points)) return c;
+  const n = points.length || 1;
+  return {
+    x: points.reduce((s, p) => s + p.x, 0) / n,
+    y: points.reduce((s, p) => s + p.y, 0) / n,
+  };
+}
+
+function bedArea(bed) {
+  if (isPolygon(bed)) return shoelaceArea(bed.points);
+  return (bed.w || 0) * (bed.h || 0);
+}
+
+function hitVertex(wx, wy, points, radiusWorld) {
+  const r2 = radiusWorld * radiusWorld;
+  let best = -1, bestD = r2;
+  points.forEach((p, i) => {
+    const dx = wx - ft(p.x), dy = wy - ft(p.y);
+    const d = dx * dx + dy * dy;
+    if (d <= bestD) { bestD = d; best = i; }
+  });
+  return best;
+}
+
+function pointerFeet(wx, wy) {
+  let x = snap(wx / SCALE);
+  let y = snap(wy / SCALE);
+  x = Math.max(0, Math.min(garden.width, x));
+  y = Math.max(0, Math.min(garden.height, y));
+  return { x, y };
+}
+
+function polygonCellInside(bed, r, c) {
+  return pointInPolygon(bed.x + c + 0.5, bed.y + r + 0.5, bed.points);
+}
+
+function pointSegDist(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const cross = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  return cross(a, b, c) * cross(a, b, d) < 0 && cross(c, d, a) * cross(c, d, b) < 0;
+}
+
+function segDist(a, b, c, d) {
+  if (segmentsIntersect(a, b, c, d)) return 0;
+  return Math.min(pointSegDist(a, c, d), pointSegDist(b, c, d), pointSegDist(c, a, b), pointSegDist(d, a, b));
+}
+
+function itemOutline(item) {
+  if (isPolygon(item)) return item.points;
+  const rot = item.rotation || 0;
+  const cx = item.x + item.w / 2, cy = item.y + item.h / 2;
+  const corners = [[-item.w / 2, -item.h / 2], [item.w / 2, -item.h / 2], [item.w / 2, item.h / 2], [-item.w / 2, item.h / 2]];
+  return corners.map(([dx, dy]) => ({
+    x: cx + dx * Math.cos(rot) - dy * Math.sin(rot),
+    y: cy + dx * Math.sin(rot) + dy * Math.cos(rot),
+  }));
+}
+
+function outlineDistance(a, b) {
+  if (pointInPolygon(a[0].x, a[0].y, b) || pointInPolygon(b[0].x, b[0].y, a)) return 0;
+  let min = Infinity;
+  for (let i = 0; i < a.length; i++) {
+    const a2 = a[(i + 1) % a.length];
+    for (let j = 0; j < b.length; j++) {
+      const b2 = b[(j + 1) % b.length];
+      min = Math.min(min, segDist(a[i], a2, b[j], b2));
+    }
+  }
+  return min;
+}
+
+function neighborWarning(bed) {
+  const outline = itemOutline(bed);
+  let closest = Infinity, name = '';
+  beds.forEach(other => {
+    if (other.id === bed.id) return;
+    const d = outlineDistance(outline, itemOutline(other));
+    if (d < closest) { closest = d; name = other.name; }
+  });
+  if (closest < 2) return `${name} is ${closest.toFixed(1)} ft away. Leave about 2 ft for a walking path.`;
+  return '';
+}
+
+function polygonDrawAllowed() {
+  return !(plotImage && !(plot.feetPerPixel > 0));
+}
+
+// ─── Plot photo + calibration ─────────────────────────────────────────────────
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('garden-planner', 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains('plots')) req.result.createObjectStore('plots');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbPut(plotId, dataUrl) {
+  if (!plotId || !dataUrl) return Promise.resolve();
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction('plots', 'readwrite');
+    tx.objectStore('plots').put(dataUrl, plotId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  })).catch(() => {});
+}
+
+function idbGet(plotId) {
+  if (!plotId) return Promise.resolve(null);
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction('plots', 'readonly');
+    const req = tx.objectStore('plots').get(plotId);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  })).catch(() => null);
+}
+
+function updateCalibReadout() {
+  const el = document.getElementById('calibReadout');
+  if (!el) return;
+  if (!plotImage) el.textContent = 'No plot photo loaded.';
+  else if (!(plot.feetPerPixel > 0)) el.textContent = 'Not calibrated. Use Calibrate, draw a line, and enter its length in feet.';
+  else {
+    const pxPerFt = 1 / plot.feetPerPixel;
+    el.textContent = `Calibrated · 1 ft = ${pxPerFt.toFixed(1)} px · garden ${garden.width.toFixed(1)} × ${garden.height.toFixed(1)} ft`;
+  }
+  const drawBtn = document.getElementById('tool-draw');
+  const allowed = polygonDrawAllowed();
+  if (drawBtn) drawBtn.disabled = !allowed;
+  if (tool === 'draw-bed' && !allowed) {
+    tool = 'select';
+    draftPoints = [];
+    draftCursor = null;
+    document.querySelectorAll('.tool-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tool === 'select');
+    });
+  }
+}
+
+function setTool(name) {
+  if (name === 'calibrate' && !plotImage) {
+    alert('Upload a plot photo first.');
+    return;
+  }
+  if (name === 'draw-bed' && !polygonDrawAllowed()) {
+    alert('Calibrate the plot photo first. Draw a line and enter its length in feet.');
+    return;
+  }
+  tool = name;
+  if (name !== 'draw-bed') { draftPoints = []; draftCursor = null; }
+  if (name !== 'calibrate') { calibClicks = []; calibHover = null; }
+  document.querySelectorAll('.tool-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tool === name);
+  });
+  canvas.style.cursor = (name === 'draw-bed' || name === 'calibrate') ? 'crosshair' : (name === 'pan' ? 'grab' : 'default');
+  draw();
+}
+
+function blankPlot() {
+  return { plotId: null, widthPx: 0, heightPx: 0, calibration: null, feetPerPixel: 0 };
+}
+
+function restorePlotMeta(meta) {
+  const prevId = plot.plotId;
+  plot.plotId = meta.plotId || null;
+  plot.widthPx = meta.widthPx || 0;
+  plot.heightPx = meta.heightPx || 0;
+  plot.calibration = meta.calibration ? { ...meta.calibration } : null;
+  plot.feetPerPixel = meta.feetPerPixel || 0;
+  if (plot.plotId !== prevId) {
+    plotImage = null;
+    plotDataUrl = null;
+    if (plot.plotId) {
+      idbGet(plot.plotId).then(url => { if (url) adoptPlotDataUrl(url, { preserveCalibration: true, keepId: true }); });
+    }
+  }
+}
+
+function worldToImagePixel(wx, wy, doSnap) {
+  const gw = ft(garden.width) || 1, gh = ft(garden.height) || 1;
+  let ix = (wx / gw) * plot.widthPx;
+  let iy = (wy / gh) * plot.heightPx;
+  if (doSnap && plot.feetPerPixel > 0) {
+    const fx = snap(ix * plot.feetPerPixel);
+    const fy = snap(iy * plot.feetPerPixel);
+    ix = fx / plot.feetPerPixel;
+    iy = fy / plot.feetPerPixel;
+  }
+  return { x: ix, y: iy };
+}
+
+function imagePixelToWorld(ix, iy) {
+  const gw = ft(garden.width), gh = ft(garden.height);
+  return {
+    x: plot.widthPx ? (ix / plot.widthPx) * gw : 0,
+    y: plot.heightPx ? (iy / plot.heightPx) * gh : 0,
+  };
+}
+
+function scaleWorld(ratio) {
+  const scalePt = p => { p.x *= ratio; p.y *= ratio; };
+  beds.forEach(b => {
+    if (isPolygon(b)) {
+      b.points.forEach(scalePt);
+      syncPolygonBounds(b);
+    } else {
+      b.x *= ratio; b.y *= ratio; b.w *= ratio; b.h *= ratio;
+      if (b.diam) b.diam *= ratio;
+    }
+    b.plantGrid = null;
+  });
+  obstacles.forEach(o => { o.x *= ratio; o.y *= ratio; o.w *= ratio; o.h *= ratio; });
+}
+
+function matchGardenToPhotoAspect() {
+  if (!plot.widthPx || !plot.heightPx) return;
+  const aspect = plot.widthPx / plot.heightPx;
+  const longSide = Math.max(garden.width, garden.height, 10);
+  if (aspect >= 1) {
+    garden.width = longSide;
+    garden.height = longSide / aspect;
+  } else {
+    garden.height = longSide;
+    garden.width = longSide * aspect;
+  }
+  const wIn = document.getElementById('gardenWidth');
+  const hIn = document.getElementById('gardenHeight');
+  if (wIn) wIn.value = Math.round(garden.width * 10) / 10;
+  if (hIn) hIn.value = Math.round(garden.height * 10) / 10;
+}
+
+function applyCalibration(cal) {
+  const fpp = feetPerPixelFromLine(cal.x1, cal.y1, cal.x2, cal.y2, cal.lengthFt);
+  if (!(fpp > 0) || !isFinite(fpp)) return;
+  const nextW = plot.widthPx * fpp, nextH = plot.heightPx * fpp;
+  if (nextW > 500 || nextH > 500 || nextW < 1 || nextH < 1) {
+    alert('That length makes the garden smaller than 1 ft or larger than 500 ft. Check the line and try again.');
+    return;
+  }
+  saveHistory();
+  const old = plot.feetPerPixel;
+  if (old > 0) scaleWorld(fpp / old);
+  plot.calibration = { ...cal };
+  plot.feetPerPixel = fpp;
+  garden.width = plot.widthPx * fpp;
+  garden.height = plot.heightPx * fpp;
+  document.getElementById('gardenWidth').value = Math.round(garden.width * 10) / 10;
+  document.getElementById('gardenHeight').value = Math.round(garden.height * 10) / 10;
+  updateCalibReadout();
+  fitView();
+  renderLists();
+  if (selectedId) syncPanel();
+  draw();
+}
+
+function handleCalibClick(wx, wy) {
+  if (!plotImage || !plot.widthPx) return;
+  const p = worldToImagePixel(wx, wy, plot.feetPerPixel > 0);
+  calibClicks.push(p);
+  if (calibClicks.length < 2) { draw(); return; }
+  const [a, b] = calibClicks;
+  const lenPx = lineLengthPx(a.x, a.y, b.x, b.y);
+  calibClicks = [];
+  calibHover = null;
+  if (lenPx < 2) { draw(); return; }
+  const raw = prompt('How long is this line, in feet?', '10');
+  if (raw == null) { draw(); return; }
+  const lengthFt = parseFloat(raw);
+  if (!(lengthFt > 0)) { alert('Enter a length greater than 0.'); draw(); return; }
+  applyCalibration({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, lengthFt });
+}
+
+function adoptPlotDataUrl(dataUrl, opts = {}) {
+  const img = new Image();
+  img.onload = () => {
+    const sameSize = plot.widthPx === img.naturalWidth && plot.heightPx === img.naturalHeight && plot.calibration;
+    const keep = opts.preserveCalibration && sameSize;
+    if (!keep) saveHistory();
+    plotImage = img;
+    plotDataUrl = dataUrl;
+    plot.widthPx = img.naturalWidth;
+    plot.heightPx = img.naturalHeight;
+    if (!opts.keepId || !plot.plotId) plot.plotId = 'plot-' + Date.now();
+    if (!keep) {
+      if (opts.preserveCalibration && plot.calibration && !sameSize) {
+        alert('The photo size does not match the saved calibration, so the scale was cleared. Calibrate again.');
+      }
+      plot.calibration = null;
+      plot.feetPerPixel = 0;
+      matchGardenToPhotoAspect();
+    }
+    idbPut(plot.plotId, dataUrl);
+    updateCalibReadout();
+    fitView();
+    draw();
+  };
+  img.src = dataUrl;
+}
+
+function uploadPlot() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const fillingGap = !plotImage && plot.calibration;
+      adoptPlotDataUrl(ev.target.result, { preserveCalibration: fillingGap, keepId: fillingGap });
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+function loadSamplePlot() {
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      adoptPlotDataUrl(c.toDataURL('image/jpeg', 0.85), { preserveCalibration: false, keepId: false });
+    } catch {
+      plotImage = img;
+      plot.plotId = 'sample-plot';
+      plot.widthPx = img.naturalWidth;
+      plot.heightPx = img.naturalHeight;
+      plot.calibration = null;
+      plot.feetPerPixel = 0;
+      plotDataUrl = null;
+      matchGardenToPhotoAspect();
+      updateCalibReadout();
+      fitView();
+      draw();
+    }
+  };
+  img.onerror = () => alert('Could not load plot-sample.jpg. Open this page from the garden-planner folder.');
+  img.src = 'plot-sample.jpg';
+}
+
+function onDrawClick(wx, wy) {
+  if (!polygonDrawAllowed()) return;
+  const now = Date.now();
+  const isDouble = now - lastDrawTap < 350;
+  lastDrawTap = now;
+  const f = pointerFeet(wx, wy);
+  if (isDouble && draftPoints.length >= 3) {
+    const last = draftPoints[draftPoints.length - 1];
+    if (Math.hypot(f.x - last.x, f.y - last.y) < 0.75) {
+      draftPoints.pop();
+      if (draftPoints.length >= 3) { closeDraft(); return; }
+    }
+  }
+  if (draftPoints.length >= 3) {
+    const first = draftPoints[0];
+    if (Math.hypot(ft(f.x) - ft(first.x), ft(f.y) - ft(first.y)) <= 14 / viewZoom) {
+      closeDraft();
+      return;
+    }
+  }
+  draftPoints.push(f);
+  draw();
+}
+
+function closeDraft() {
+  if (draftPoints.length < 3) return;
+  saveHistory();
+  const ground = document.getElementById('drawGroundToggle').checked;
+  const id = (ground ? 'area' : 'bed') + nextId++;
+  const color = ground ? '#3a7d44' : BED_COLORS[colorIdx++ % BED_COLORS.length];
+  const bed = {
+    id, name: ground ? 'Ground Area' : 'New Bed',
+    shape: 'polygon',
+    points: draftPoints.map(p => ({ x: p.x, y: p.y })),
+    x: 0, y: 0, w: 1, h: 1,
+    color, type: ground ? 'ground' : 'raised',
+    depthIn: ground ? undefined : 12,
+    plants: [], notes: '',
+  };
+  syncPolygonBounds(bed);
+  beds.push(bed);
+  draftPoints = [];
+  draftCursor = null;
+  setTool('select');
+  renderLists();
+  draw();
+  select(id, 'bed');
+}
+
+function clampPolygonMove(points, dx, dy) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  points.forEach(p => {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  });
+  if (minX + dx < 0) dx = -minX;
+  if (minY + dy < 0) dy = -minY;
+  if (maxX + dx > garden.width) dx = garden.width - maxX;
+  if (maxY + dy > garden.height) dy = garden.height - maxY;
+  return { dx, dy };
+}
+
+function updatePolyPanel() {
+  const item = getSelected();
+  const stats = document.getElementById('polyStats');
+  const note = document.getElementById('neighborNote');
+  if (!item || !isPolygon(item) || !stats) return;
+  stats.textContent = `${bedArea(item).toFixed(1)} sq ft · ${item.points.length} corners`;
+  const msg = neighborWarning(item);
+  if (note) {
+    note.style.display = msg ? 'block' : 'none';
+    note.textContent = msg;
+  }
+}
+
+function drawCalibLine(a, b, label) {
+  const p1 = imagePixelToWorld(a.x, a.y);
+  const p2 = imagePixelToWorld(b.x, b.y);
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.strokeStyle = '#ff9f0a';
+  ctx.lineWidth = 2 / viewZoom;
+  ctx.setLineDash([6 / viewZoom, 4 / viewZoom]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  [p1, p2].forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 5 / viewZoom, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff9f0a';
+    ctx.fill();
+  });
+  if (label) {
+    ctx.fillStyle = '#7a3e00';
+    ctx.font = `bold ${Math.round(12 / viewZoom)}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(label, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 6 / viewZoom);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  }
+}
+
+function drawDraft() {
+  if (draftPoints.length) {
+    ctx.beginPath();
+    draftPoints.forEach((p, i) => i ? ctx.lineTo(ft(p.x), ft(p.y)) : ctx.moveTo(ft(p.x), ft(p.y)));
+    if (draftCursor) ctx.lineTo(ft(draftCursor.x), ft(draftCursor.y));
+    ctx.strokeStyle = '#ff9f0a';
+    ctx.lineWidth = 2 / viewZoom;
+    ctx.setLineDash([4 / viewZoom, 3 / viewZoom]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    draftPoints.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(ft(p.x), ft(p.y), 5 / viewZoom, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff9f0a';
+      ctx.fill();
+    });
+  }
+  if (plot.calibration && plot.widthPx) {
+    drawCalibLine(
+      { x: plot.calibration.x1, y: plot.calibration.y1 },
+      { x: plot.calibration.x2, y: plot.calibration.y2 },
+      `${plot.calibration.lengthFt} ft`
+    );
+  }
+  if (calibClicks.length === 1 && calibHover) drawCalibLine(calibClicks[0], calibHover, '');
+  else if (calibClicks.length === 1) {
+    const p = imagePixelToWorld(calibClicks[0].x, calibClicks[0].y);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 5 / viewZoom, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff9f0a';
+    ctx.fill();
+  }
+}
+
 // ─── Draw ─────────────────────────────────────────────────────────────────────
 function draw() {
   const W = canvas.width, H = canvas.height;
@@ -972,9 +1585,13 @@ function draw() {
 
   const GW = ft(garden.width), GH = ft(garden.height);
 
-  // Garden background
-  ctx.fillStyle = '#dff0d8';
-  ctx.fillRect(0, 0, GW, GH);
+  // Garden background, with the plot photo underneath when one is loaded
+  if (plotImage) {
+    ctx.drawImage(plotImage, 0, 0, GW, GH);
+  } else {
+    ctx.fillStyle = '#dff0d8';
+    ctx.fillRect(0, 0, GW, GH);
+  }
 
   // Grid lines
   ctx.lineWidth = 0.5;
@@ -1006,6 +1623,8 @@ function draw() {
   // Garden border
   ctx.strokeStyle = '#2d6a30'; ctx.lineWidth = 2;
   ctx.strokeRect(0, 0, GW, GH);
+
+  drawDraft();
 
   ctx.restore();
 }
@@ -1072,7 +1691,101 @@ function drawObstacle(o) {
   }
 }
 
+function drawPolygonBed(b) {
+  const sel = b.id === selectedId;
+  const isGround = b.type === 'ground';
+  const pts = b.points.map(p => ({ x: ft(p.x), y: ft(p.y) }));
+  const path = () => {
+    ctx.beginPath();
+    pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.closePath();
+  };
+
+  ctx.save();
+  ctx.shadowColor = sel ? 'rgba(255,159,10,0.4)' : 'rgba(0,0,0,0.18)';
+  ctx.shadowBlur = sel ? 12 : 5;
+  ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+  ctx.fillStyle = b.color;
+  path(); ctx.fill();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+
+  if (isGround) ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = sel ? '#ff9f0a' : (isGround ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.28)');
+  ctx.lineWidth = sel ? 3 : 1.5;
+  path(); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.save();
+  path(); ctx.clip();
+  ctx.strokeStyle = isGround ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 0.8;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath();
+  const x0 = ft(b.x), y0 = ft(b.y);
+  for (let col = 1; col < b.w; col++) {
+    const lx = x0 + ft(col);
+    ctx.moveTo(lx, y0); ctx.lineTo(lx, y0 + ft(b.h));
+  }
+  for (let row = 1; row < b.h; row++) {
+    const ly = y0 + ft(row);
+    ctx.moveTo(x0, ly); ctx.lineTo(x0 + ft(b.w), ly);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (!b.plantGrid && b.plants?.length) initPlantGrid(b);
+  if (b.plantGrid) {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    b.plantGrid.forEach((row, ri) => {
+      row.forEach((cell, ci) => {
+        if (!cell || cell.occupied) return;
+        if (!polygonCellInside(b, ri, ci)) return;
+        const emoji = typeof cell === 'string' ? cell : cell.emoji;
+        if (!emoji) return;
+        const rSpan = cell.rowSpan || 1;
+        const cSpan = cell.colSpan || 1;
+        const ex = x0 + ft(ci) + ft(cSpan) / 2;
+        const ey = y0 + ft(ri) + ft(rSpan) / 2;
+        const fs = clamp(10, Math.round(SCALE * Math.min(rSpan, cSpan) * 0.58), 36);
+        ctx.font = `${fs}px sans-serif`;
+        ctx.globalAlpha = 0.92;
+        ctx.fillText(emoji, ex, ey);
+        ctx.globalAlpha = 1;
+      });
+    });
+  }
+  ctx.restore();
+
+  const label = polygonLabelPoint(b.points);
+  const area = bedArea(b);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `bold ${clamp(10, 13, ft(Math.min(b.w, b.h)) / 5)}px sans-serif`;
+  ctx.fillText(b.name, ft(label.x), ft(label.y) - 8);
+  ctx.font = `${clamp(9, 11, ft(Math.min(b.w, b.h)) / 6)}px sans-serif`;
+  ctx.globalAlpha = 0.85;
+  ctx.fillText(`${area.toFixed(1)} sq ft`, ft(label.x), ft(label.y) + 8);
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.restore();
+
+  if (sel) {
+    pts.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6 / viewZoom, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff9f0a';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1 / viewZoom;
+      ctx.stroke();
+    });
+  }
+}
+
 function drawBed(b) {
+  if (isPolygon(b)) { drawPolygonBed(b); return; }
   const bx = ft(b.x), by = ft(b.y), w = ft(b.w), h = ft(b.h);
   const cx = bx + w/2, cy = by + h/2;
   const rot = b.rotation || 0;
@@ -1325,18 +2038,22 @@ function hitRotateHandle(px, py, item) {
   return Math.sqrt((px - hx)**2 + (py - hy)**2) <= 10 / viewZoom;
 }
 
-function hitTest(px, py) {
+function hitTest(wx, wy) {
   function inRotated(item) {
     const w = ft(item.w), h = ft(item.h);
     const cx = ft(item.x) + w/2, cy = ft(item.y) + h/2;
     const rot = -(item.rotation || 0);
-    const dx = px - cx, dy = py - cy;
+    const dx = wx - cx, dy = wy - cy;
     const lx = dx * Math.cos(rot) - dy * Math.sin(rot);
     const ly = dx * Math.sin(rot) + dy * Math.cos(rot);
     return lx >= -w/2 && lx <= w/2 && ly >= -h/2 && ly <= h/2;
   }
-  for (let i = beds.length - 1; i >= 0; i--)
-    if (inRotated(beds[i])) return { type:'bed', item:beds[i] };
+  for (let i = beds.length - 1; i >= 0; i--) {
+    const b = beds[i];
+    if (isPolygon(b)) {
+      if (pointInPolygon(wx / SCALE, wy / SCALE, b.points)) return { type:'bed', item:b };
+    } else if (inRotated(b)) return { type:'bed', item:b };
+  }
   for (let i = obstacles.length - 1; i >= 0; i--)
     if (inRotated(obstacles[i])) return { type:'obstacle', item:obstacles[i] };
   return null;
@@ -1344,13 +2061,36 @@ function hitTest(px, py) {
 
 // ─── Mouse events ─────────────────────────────────────────────────────────────
 canvas.addEventListener('mousedown', e => {
+  if (e.button === 2) return;
   const r  = canvas.getBoundingClientRect();
   const sx = e.clientX - r.left, sy = e.clientY - r.top;
   const { x: wpx, y: wpy } = screenToWorld(sx, sy);
 
+  if (e.button === 1 || tool === 'pan') {
+    if (e.button === 1) e.preventDefault();
+    select(null);
+    isPanning = true;
+    panStart  = { x: sx - viewX, y: sy - viewY };
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
+  if (tool === 'calibrate') { handleCalibClick(wpx, wpy); return; }
+  if (tool === 'draw-bed') { onDrawClick(wpx, wpy); return; }
+
   // Check rotation handle of selected item first
   const selItem = selectedId && (beds.find(b => b.id === selectedId) || obstacles.find(o => o.id === selectedId));
-  if (selItem && hitRotateHandle(wpx, wpy, selItem)) {
+  if (selItem && isPolygon(selItem)) {
+    const vi = hitVertex(wpx, wpy, selItem.points, 12 / viewZoom);
+    if (vi >= 0) {
+      saveHistory();
+      dragging = selItem;
+      dragMode = 'vertex';
+      dragVertex = vi;
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+  }
+  if (selItem && !isPolygon(selItem) && hitRotateHandle(wpx, wpy, selItem)) {
     saveHistory();
     isRotating = true;
     const cen = { x: ft(selItem.x) + ft(selItem.w)/2, y: ft(selItem.y) + ft(selItem.h)/2 };
@@ -1365,7 +2105,20 @@ canvas.addEventListener('mousedown', e => {
     saveHistory();
     select(hit.item.id, hit.type);
     dragging = hit.item;
-    dragOff  = { x: wpx - ft(hit.item.x), y: wpy - ft(hit.item.y) };
+    if (isPolygon(hit.item)) {
+      const vi = hitVertex(wpx, wpy, hit.item.points, 12 / viewZoom);
+      if (vi >= 0) {
+        dragMode = 'vertex';
+        dragVertex = vi;
+      } else {
+        dragMode = 'move';
+        dragOriginPoints = hit.item.points.map(p => ({ x: p.x, y: p.y }));
+        dragStartFeet = { x: snap(wpx / SCALE), y: snap(wpy / SCALE) };
+      }
+    } else {
+      dragMode = 'item';
+      dragOff  = { x: wpx - ft(hit.item.x), y: wpy - ft(hit.item.y) };
+    }
     canvas.style.cursor = 'grabbing';
   } else {
     select(null);
@@ -1391,6 +2144,19 @@ canvas.addEventListener('mousemove', e => {
       selItem.rotation = newRot;
       draw();
     }
+  } else if (dragging && isPolygon(dragging)) {
+    if (dragMode === 'vertex') {
+      dragging.points[dragVertex] = pointerFeet(wpx, wpy);
+      syncPolygonBounds(dragging);
+    } else if (dragOriginPoints) {
+      const rawDx = snap(wpx / SCALE) - dragStartFeet.x;
+      const rawDy = snap(wpy / SCALE) - dragStartFeet.y;
+      const { dx, dy } = clampPolygonMove(dragOriginPoints, rawDx, rawDy);
+      dragging.points = dragOriginPoints.map(p => ({ x: p.x + dx, y: p.y + dy }));
+      syncPolygonBounds(dragging);
+    }
+    updatePolyPanel();
+    draw();
   } else if (dragging) {
     // Compute AABB of the rotated item so clamping uses its visual footprint
     const rot = dragging.rotation || 0;
@@ -1409,6 +2175,16 @@ canvas.addEventListener('mousemove', e => {
     viewX = sx - panStart.x;
     viewY = sy - panStart.y;
     draw();
+  } else if (tool === 'draw-bed') {
+    draftCursor = pointerFeet(wpx, wpy);
+    canvas.style.cursor = 'crosshair';
+    draw();
+  } else if (tool === 'calibrate') {
+    if (plotImage && plot.widthPx) calibHover = worldToImagePixel(wpx, wpy, plot.feetPerPixel > 0);
+    canvas.style.cursor = 'crosshair';
+    if (calibClicks.length === 1) draw();
+  } else if (tool === 'pan') {
+    canvas.style.cursor = 'grab';
   } else {
     canvas.style.cursor = hitTest(wpx, wpy) ? 'grab' : 'default';
   }
@@ -1416,9 +2192,13 @@ canvas.addEventListener('mousemove', e => {
 
 canvas.addEventListener('mouseup', () => {
   if (isRotating) { isRotating = false; saveData(); }
+  if (dragging && isPolygon(dragging) && dragMode === 'vertex') dragging.plantGrid = null;
   dragging  = null;
+  dragMode = null;
+  dragVertex = -1;
+  dragOriginPoints = null;
   isPanning = false;
-  canvas.style.cursor = 'default';
+  canvas.style.cursor = (tool === 'draw-bed' || tool === 'calibrate') ? 'crosshair' : (tool === 'pan' ? 'grab' : 'default');
   renderLists();
   draw();
 });
@@ -1465,9 +2245,33 @@ canvas.addEventListener('mouseup', () => {
     const sx = t.clientX - r.left, sy = t.clientY - r.top;
     const { x: wpx, y: wpy } = screenToWorld(sx, sy);
 
+    if (tool === 'pan') {
+      select(null); touchHit = null;
+      isPanning = true;
+      panStart = { x: sx - viewX, y: sy - viewY };
+      return;
+    }
+    if (tool === 'calibrate' || tool === 'draw-bed') {
+      touchHit = null;
+      dragging = null;
+      isPanning = false;
+      return;
+    }
+
     // Check rotation handle first
     const selItem = selectedId && (beds.find(b => b.id === selectedId) || obstacles.find(o => o.id === selectedId));
-    if (selItem && hitRotateHandle(wpx, wpy, selItem)) {
+    if (selItem && isPolygon(selItem)) {
+      const vi = hitVertex(wpx, wpy, selItem.points, 14 / viewZoom);
+      if (vi >= 0) {
+        saveHistory();
+        dragging = selItem;
+        dragMode = 'vertex';
+        dragVertex = vi;
+        touchHit = { type: 'bed', item: selItem };
+        return;
+      }
+    }
+    if (selItem && !isPolygon(selItem) && hitRotateHandle(wpx, wpy, selItem)) {
       saveHistory();
       isRotating = true;
       const cen = { x: ft(selItem.x) + ft(selItem.w)/2, y: ft(selItem.y) + ft(selItem.h)/2 };
@@ -1480,7 +2284,14 @@ canvas.addEventListener('mouseup', () => {
     if (touchHit) {
       saveHistory();
       dragging = touchHit.item;
-      dragOff  = { x: wpx - ft(touchHit.item.x), y: wpy - ft(touchHit.item.y) };
+      if (isPolygon(touchHit.item)) {
+        dragMode = 'move';
+        dragOriginPoints = touchHit.item.points.map(p => ({ x: p.x, y: p.y }));
+        dragStartFeet = { x: snap(wpx / SCALE), y: snap(wpy / SCALE) };
+      } else {
+        dragMode = 'item';
+        dragOff  = { x: wpx - ft(touchHit.item.x), y: wpy - ft(touchHit.item.y) };
+      }
     } else {
       select(null); touchHit = null;
       isPanning = true;
@@ -1541,6 +2352,16 @@ canvas.addEventListener('mouseup', () => {
   canvas.addEventListener('touchend', e => {
     e.preventDefault();
     pinchDist = null;
+    if (!touchMoved && touchStart && (tool === 'calibrate' || tool === 'draw-bed')) {
+      const rr = canvas.getBoundingClientRect();
+      const { x: wpx, y: wpy } = screenToWorld(touchStart.x - rr.left, touchStart.y - rr.top);
+      if (tool === 'calibrate') handleCalibClick(wpx, wpy);
+      else onDrawClick(wpx, wpy);
+      touchHit = null;
+      isPanning = false;
+      dragging = null;
+      return;
+    }
     if (isRotating) { isRotating = false; saveData(); draw(); touchHit = null; return; }
     if (!touchMoved && touchHit) {
       const hitId  = touchHit.item.id;
@@ -1580,6 +2401,15 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 
 canvas.addEventListener('dblclick', e => {
+  if (tool === 'draw-bed') {
+    if (draftPoints.length >= 2) {
+      const a = draftPoints[draftPoints.length - 1];
+      const b = draftPoints[draftPoints.length - 2];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < 0.75) draftPoints.pop();
+    }
+    if (draftPoints.length >= 3) closeDraft();
+    return;
+  }
   const r   = canvas.getBoundingClientRect();
   const sx  = e.clientX - r.left, sy = e.clientY - r.top;
   const hit = hitTest(...Object.values(screenToWorld(sx, sy)));
@@ -1594,6 +2424,14 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
     e.preventDefault();
     undoLast();
+    return;
+  }
+  if (e.key === 'Escape' && (draftPoints.length || calibClicks.length)) {
+    draftPoints = [];
+    draftCursor = null;
+    calibClicks = [];
+    calibHover = null;
+    draw();
     return;
   }
   if (!selectedId) return;
@@ -1631,19 +2469,23 @@ function syncPanel() {
 
   const isGround = isBed && item.type === 'ground';
   const isPot    = isBed && item.type === 'pot';
+  const poly     = isBed && isPolygon(item);
   document.getElementById('panelTitle').textContent =
     isPot ? '🪴 Pot' : isGround ? '🌍 Ground Area' : isBed ? '🌿 Bed Details' : '⬛ Obstacle Details';
   document.getElementById('propName').value = item.name;
   const _vp = visualPos(item);
   document.getElementById('propX').value    = Math.round(_vp.x * 10) / 10;
   document.getElementById('propY').value    = Math.round(_vp.y * 10) / 10;
-  if (!isPot) {
+  if (!isPot && !poly) {
     document.getElementById('propW').value = item.w;
     document.getElementById('propH').value = item.h;
   }
 
-  document.getElementById('sizeRow').style.display     = isPot ? 'none' : '';
+  document.getElementById('sizeRow').style.display     = (isPot || poly) ? 'none' : '';
+  document.getElementById('posRow').style.display      = poly ? 'none' : '';
+  document.getElementById('polySection').style.display = poly ? '' : 'none';
   document.getElementById('potSection').style.display  = isPot ? '' : 'none';
+  if (poly) updatePolyPanel();
   document.getElementById('plantsSection').style.display = isBed ? '' : 'none';
   document.getElementById('organizerRow').style.display  = isBed ? '' : 'none';
   document.getElementById('notesSection').style.display  = isBed ? '' : 'none';
@@ -1810,7 +2652,11 @@ function duplicateSelected() {
     const orig = beds.find(b => b.id === selectedId);
     const newId = (orig.type === 'pot' ? 'pot' : orig.type === 'ground' ? 'area' : 'bed') + nextId++;
     const copy = { ...orig, id: newId, x: orig.x + 1, y: orig.y + 1,
-                   plants: [...(orig.plants || [])], notes: orig.notes || '' };
+                   plants: [...(orig.plants || [])], notes: orig.notes || '', plantGrid: null };
+    if (orig.points) {
+      copy.points = orig.points.map(p => ({ x: p.x + 1, y: p.y + 1 }));
+      syncPolygonBounds(copy);
+    }
     beds.push(copy);
     select(newId, 'bed');
   } else if (isObs) {
@@ -1838,6 +2684,11 @@ function applyGardenSize() {
   saveHistory();
   garden.width  = parseFloat(document.getElementById('gardenWidth').value)  || 20;
   garden.height = parseFloat(document.getElementById('gardenHeight').value) || 18;
+  if (plotImage) {
+    plot.calibration = null;
+    plot.feetPerPixel = 0;
+    updateCalibReadout();
+  }
   fitView();
   draw();
 }
@@ -1877,7 +2728,7 @@ function renderLists() {
           <div class="color-dot" style="background:${b.color}"></div>
           <span class="list-item-name">${b.name}</span>
         </div>
-        <span class="list-item-sub">${b.type === 'pot' ? `${b.diam * 12}" pot` : b.type === 'ground' ? `${b.w}×${b.h} ft · in-ground` : `${b.w}×${b.h} ft`}</span>
+        <span class="list-item-sub">${b.type === 'pot' ? `${b.diam * 12}" pot` : isPolygon(b) ? `${bedArea(b).toFixed(1)} sq ft · ${b.points.length} sides` : b.type === 'ground' ? `${b.w}×${b.h} ft · in-ground` : `${b.w}×${b.h} ft`}</span>
       </div>
       <div class="list-item-sub" style="margin-top:3px">${(b.plants||[]).join(', ') || '—'}</div>
     `;
@@ -2078,11 +2929,24 @@ function gridNeedsMigration(bed) {
 
 // ─── Save / Load JSON ─────────────────────────────────────────────────────────
 function saveJSON() {
+  const embed = document.getElementById('embedPhoto')?.checked && plotDataUrl;
   const plan = {
-    version: 1,
+    version: 2,
     garden: { ...garden },
-    beds: beds.map(b => ({ ...b, plants: [...(b.plants || [])] })),
+    beds: beds.map(b => ({
+      ...b,
+      plants: [...(b.plants || [])],
+      points: b.points ? b.points.map(p => ({ x: p.x, y: p.y })) : undefined,
+    })),
     obstacles: obstacles.map(o => ({ ...o })),
+    plot: plot.plotId ? {
+      plotId: plot.plotId,
+      widthPx: plot.widthPx,
+      heightPx: plot.heightPx,
+      calibration: plot.calibration ? { ...plot.calibration } : null,
+      feetPerPixel: plot.feetPerPixel || 0,
+      imageDataUrl: embed ? plotDataUrl : undefined,
+    } : null,
     savedAt: new Date().toISOString(),
   };
   const blob = new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json' });
@@ -2104,6 +2968,13 @@ function confirmNewGarden() {
   beds      = [];
   obstacles = [];
   garden    = { width: 20, height: 18 };
+  plot = blankPlot();
+  plotImage = null;
+  plotDataUrl = null;
+  calibClicks = [];
+  draftPoints = [];
+  draftCursor = null;
+  tool = 'select';
   nextId    = 1;
   colorIdx  = 0;
   selectedId = null;
@@ -2112,6 +2983,8 @@ function confirmNewGarden() {
   document.getElementById('gardenHeight').value = garden.height;
   document.getElementById('rightPanel').classList.remove('open');
   select(null);
+  setTool('select');
+  updateCalibReadout();
   renderLists();
   fitView();
   draw();
@@ -2140,7 +3013,29 @@ function loadJSON() {
           });
         }
         if (plan.obstacles) obstacles = plan.obstacles;
+        if (plan.plot) {
+          plot = {
+            plotId: plan.plot.plotId || null,
+            widthPx: plan.plot.widthPx || 0,
+            heightPx: plan.plot.heightPx || 0,
+            calibration: plan.plot.calibration || null,
+            feetPerPixel: plan.plot.feetPerPixel || 0,
+          };
+          if (plan.plot.imageDataUrl) {
+            adoptPlotDataUrl(plan.plot.imageDataUrl, { preserveCalibration: true, keepId: true });
+          } else if (plan.plot.plotId) {
+            idbGet(plan.plot.plotId).then(url => {
+              if (url) adoptPlotDataUrl(url, { preserveCalibration: true, keepId: true });
+              else alert('This plan’s plot photo is not on this computer. Upload the same photo and the saved scale will apply if the image size matches.');
+            });
+          }
+        } else {
+          plot = blankPlot();
+          plotImage = null;
+          plotDataUrl = null;
+        }
         select(null); renderLists(); initCanvas();
+        updateCalibReadout();
         alert('Plan loaded successfully!');
       } catch { alert('Could not read plan file. Make sure it was saved from this app.'); }
     };
@@ -2174,7 +3069,130 @@ function switchTab(tab) {
 }
 
 // ─── Bed Builder ──────────────────────────────────────────────────────────────
+function boardSizeForDepth(depthIn) {
+  if      (depthIn <= 8)  return { boardSize: '2×8', runs: 1 };
+  else if (depthIn <= 12) return { boardSize: '2×6', runs: 2 };
+  else if (depthIn <= 15) return { boardSize: '2×8', runs: 2 };
+  return { boardSize: '2×6', runs: 3 };
+}
+
+function lumberBoardCost(len, size) {
+  return size === '2×6'
+    ? (len<=6?5 : len<=8?7 : len<=10?9 : len<=12?11 : 14)
+    : (len<=6?7 : len<=8?9 : len<=10?11 : len<=12?13 : 16);
+}
+
+function edgeCuts(points) {
+  const cuts = [];
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length];
+    let left = Math.hypot(b.x - a.x, b.y - a.y);
+    while (left > 16) { cuts.push(16); left -= 16; }
+    if (left > 0.05) cuts.push(Math.round(left * 10) / 10);
+  }
+  return cuts;
+}
+
+function calcPolygonMaterials(bed) {
+  const depthIn = bed.depthIn || 12;
+  const { boardSize, runs } = boardSizeForDepth(depthIn);
+  const actualDepthIn = boardSize === '2×6' ? runs * 5.5 : runs * 7.25;
+  const area = shoelaceArea(bed.points);
+  const cuts = edgeCuts(bed.points);
+  const BOARD_LENGTHS = [6, 8, 10, 12, 14, 16];
+  const nearestLen = dim => BOARD_LENGTHS.find(l => l >= dim) || 16;
+  let lumberCost = 0;
+  const boards = cuts.map(len => {
+    const boardLen = nearestLen(len);
+    const cost = lumberBoardCost(boardLen, boardSize);
+    lumberCost += cost * runs;
+    return { len, boardLen, cost };
+  });
+  const postCount = bed.points.length;
+  const postCost = postCount * 4;
+  const screwCost = Math.max(1, Math.ceil(runs * cuts.length * 2));
+  const soilCuFtNum = area * (depthIn / 12);
+  const soilCuYd = soilCuFtNum / 27;
+  const soilCost = Math.round(soilCuYd * 38);
+  const total = lumberCost + postCost + screwCost + soilCost;
+  return {
+    polygon: true, W: bed.w, L: bed.h, area, depthIn, boardSize, runs, actualDepthIn,
+    cuts, boards, postCount,
+    lumberCost, postCost, screwCost,
+    soilCuFtNum, soilCuFt: soilCuFtNum.toFixed(1), soilCuYd: soilCuYd.toFixed(2),
+    soilCost, total,
+  };
+}
+
+function polygonBuildHTML(bed, m) {
+  const cutItems = m.boards.map(b =>
+    `<li><strong>${b.len} ft</strong> edge — cut from a ${b.boardLen} ft ${m.boardSize} (${m.runs} run${m.runs > 1 ? 's' : ''})</li>`
+  ).join('');
+  const boardRows = m.boards.map(b => `
+    <tr>
+      <td>${m.boardSize} edge board ${amazonBadge(`cedar ${m.boardSize} board lumber`)}</td>
+      <td>${m.runs}</td>
+      <td>${b.len} ft cut from a ${b.boardLen} ft board</td>
+      <td class="cost">$${b.cost * m.runs}</td>
+    </tr>`).join('');
+  return `
+    <div class="report-bed">
+      <div class="report-bed-header">
+        <h3>${bed.name}</h3>
+        <span>${m.area.toFixed(1)} sq ft · ${bed.points.length} sides × ${m.actualDepthIn.toFixed(1)} in deep (${m.runs}× ${m.boardSize})</span>
+      </div>
+      <div class="report-bed-body">
+        <div class="report-section">
+          <h4>🧱 Materials List</h4>
+          <table class="materials-table">
+            <tr><th>Item</th><th>Qty</th><th>Size / Notes</th><th class="cost">Est. Cost</th></tr>
+            ${boardRows}
+            <tr>
+              <td>4×4 Corner Post ${amazonBadge('cedar 4x4 post raised garden bed')}</td><td>${m.postCount}</td>
+              <td>One post at each corner, cut to about ${(m.actualDepthIn + 2).toFixed(0)} in</td>
+              <td class="cost">$${m.postCost}</td>
+            </tr>
+            <tr>
+              <td>3 in Deck Screws ${amazonBadge('galvanized 3 inch deck screws')}</td><td>1 box</td>
+              <td>Galvanized deck screws, one box covers this frame</td>
+              <td class="cost">$${m.screwCost}</td>
+            </tr>
+            <tr class="soil-row">
+              <td>Garden Soil / Mix ${amazonBadge('raised bed garden soil mix')}</td><td>${m.soilCuYd} yd³</td>
+              <td>${m.soilCuFt} cu ft needed (bulk or ~${Math.ceil(m.soilCuFtNum / 2)} bags × 2 cu ft)</td>
+              <td class="cost">≈$${m.soilCost}</td>
+            </tr>
+            <tr class="total-row">
+              <td colspan="3"><strong>Estimated Total</strong></td>
+              <td class="cost"><strong>$${m.total}</strong></td>
+            </tr>
+          </table>
+          <p style="font-size:11px;color:#888;margin-top:6px">Prices are approximate Home Depot / Lowe's averages. Each straight edge is one board run. Edges longer than 16 ft are split.</p>
+        </div>
+        <div class="report-section">
+          <h4>✂️ Cut List</h4>
+          <ul class="cut-list">${cutItems}
+            <li>${m.postCount} × corner posts: <strong>${m.actualDepthIn.toFixed(0)} in each</strong></li>
+          </ul>
+        </div>
+        <div class="report-section">
+          <h4>🔨 Assembly Steps</h4>
+          <ol class="steps-list">
+            <li>Mark each corner of the outline with a stake. Measure the edges against the cut list.</li>
+            <li>Cut one board for each edge. Edges longer than 16 ft use two boards butted at a post.</li>
+            <li>Stand the boards along the outline and clamp a corner post at each vertex.</li>
+            <li>Pre-drill and drive 3 in galvanized deck screws through the boards into the posts.</li>
+            <li>Set the frame in place and check that it sits flat. Shim any low corner.</li>
+            <li>Fill with ${m.soilCuFt} cu ft (${m.soilCuYd} yd³) of garden mix, rake level, and water before planting.</li>
+          </ol>
+        </div>
+        ${bed.notes ? `<div class="report-section"><h4>📝 Bed Notes</h4><p style="font-size:12px;color:#4a6b4b">${bed.notes}</p></div>` : ''}
+      </div>
+    </div>`;
+}
+
 function calcMaterials(bed) {
+  if (isPolygon(bed)) return calcPolygonMaterials(bed);
   const W = bed.w, L = bed.h;
   const depthIn = bed.depthIn || 12;
 
@@ -2199,8 +3217,8 @@ function calcMaterials(bed) {
   const sideCost = boardCost(sideLen, boardSize);
   const endCost  = boardCost(endLen,  boardSize);
 
-  const soilCuFt = W * L * (depthIn / 12);
-  const soilCuYd = soilCuFt / 27;
+  const soilCuFtNum = W * L * (depthIn / 12);
+  const soilCuYd = soilCuFtNum / 27;
 
   const lumberCost = runs * ((2 * sideCost) + (2 * endCost));
   const postCost   = 4 * 4;                    // ~$4 per cut corner post
@@ -2208,10 +3226,10 @@ function calcMaterials(bed) {
   const soilCost   = Math.round(soilCuYd * 38);
   const total      = lumberCost + postCost + screwCost + soilCost;
 
-  return { W, L, depthIn, boardSize, runs, actualDepthIn,
-    sideLen, endLen, sideCost, endCost,
+  return { W, L, area: W * L, depthIn, boardSize, runs, actualDepthIn,
+    sideLen, endLen, sideCost, endCost, postCount: 4,
     lumberCost, postCost, screwCost,
-    soilCuFt: soilCuFt.toFixed(1), soilCuYd: soilCuYd.toFixed(2),
+    soilCuFtNum, soilCuFt: soilCuFtNum.toFixed(1), soilCuYd: soilCuYd.toFixed(2),
     soilCost, total };
 }
 
@@ -2223,6 +3241,7 @@ function generateBuildHTML() {
   const bedSections = raisedBeds.map(bed => {
     const m = calcMaterials(bed);
     grandTotal += m.total;
+    if (m.polygon) return polygonBuildHTML(bed, m);
     const sqft = bed.w * bed.h;
 
     return `
@@ -2295,7 +3314,7 @@ function generateBuildHTML() {
     </div>`;
   }).join('');
 
-  const totalSqft = raisedBeds.reduce((s, b) => s + b.w * b.h, 0);
+  const totalSqft = Math.round(raisedBeds.reduce((s, b) => s + bedArea(b), 0) * 10) / 10;
   const groundNote = nonRaised.length
     ? `<p style="font-size:12px;color:#666;margin-top:8px">🌍 ${nonRaised.length} ground area${nonRaised.length > 1 ? 's' : ''}/pot${nonRaised.length > 1 ? 's' : ''} not shown here — no lumber needed. See Plant Organizer for planting details.</p>`
     : '';
@@ -2449,11 +3468,14 @@ function getPlantSpan(sqft) {
   return { rowSpan: side, colSpan: side, perSqft: 1 };
 }
 
-function canPlaceSpan(cells, r, c, rowSpan, colSpan, L, W) {
+function canPlaceSpan(cells, r, c, rowSpan, colSpan, L, W, bed) {
   if (r + rowSpan > L || c + colSpan > W) return false;
-  for (let dr = 0; dr < rowSpan; dr++)
-    for (let dc = 0; dc < colSpan; dc++)
+  for (let dr = 0; dr < rowSpan; dr++) {
+    for (let dc = 0; dc < colSpan; dc++) {
+      if (bed && isPolygon(bed) && !polygonCellInside(bed, r + dr, c + dc)) return false;
       if (cells[r + dr][c + dc] !== null) return false;
+    }
+  }
   return true;
 }
 
@@ -2491,7 +3513,14 @@ function initPlantGrid(bed) {
   if (bed.plantGrid) return;
   const W = Math.max(1, Math.floor(bed.w));
   const L = Math.max(1, Math.floor(bed.h));
-  const totalCells = W * L;
+  let inside = W * L;
+  if (isPolygon(bed)) {
+    inside = 0;
+    for (let r = 0; r < L; r++)
+      for (let c = 0; c < W; c++)
+        if (polygonCellInside(bed, r, c)) inside++;
+  }
+  const totalCells = Math.max(1, inside);
   const cells = Array.from({ length: L }, () => Array(W).fill(null));
 
   const plants = (bed.plants || []).filter(p => PLANT_DATA[p]);
@@ -2505,7 +3534,7 @@ function initPlantGrid(bed) {
       for (let i = 0; i < instances; i++) {
         outer: for (let r = 0; r < L; r++)
           for (let c = 0; c < W; c++)
-            if (canPlaceSpan(cells, r, c, rowSpan, colSpan, L, W)) {
+            if (canPlaceSpan(cells, r, c, rowSpan, colSpan, L, W, bed)) {
               placeSpanInGrid(cells, r, c, rowSpan, colSpan, pd.emoji, perSqft);
               break outer;
             }
@@ -2526,7 +3555,7 @@ function addPlantToGrid(bed, pName) {
   for (let i = 0; i < instances; i++) {
     outer: for (let r = 0; r < L; r++)
       for (let c = 0; c < W; c++)
-        if (canPlaceSpan(bed.plantGrid, r, c, rowSpan, colSpan, L, W)) {
+        if (canPlaceSpan(bed.plantGrid, r, c, rowSpan, colSpan, L, W, bed)) {
           placeSpanInGrid(bed.plantGrid, r, c, rowSpan, colSpan, pd.emoji, perSqft);
           break outer;
         }
@@ -2566,7 +3595,11 @@ function clearBedPlants(bedId) {
   syncPanel();
 }
 
-function igridCellHTML(cell, bedId, ri, ci, cellSize = 38) {
+function igridCellHTML(cell, bedId, ri, ci, cellSize = 38, outside = false) {
+  if (outside) {
+    return `<div class="igrid-cell outside" data-bed="${bedId}" data-row="${ri}" data-col="${ci}"
+      ondragover="igridDragOver(event)" ondragleave="igridDragLeave(event)" ondrop="igridDrop(event)"></div>`;
+  }
   // Occupied cells are invisible — the spanning parent covers their space in the grid
   if (cell && cell.occupied) return '';
 
@@ -2605,7 +3638,7 @@ function renderInteractiveGrid(bed) {
   const W = Math.max(1, Math.floor(bed.w));
   const cs = igridCellSize(W); // responsive cell size
   const cells = bed.plantGrid.flatMap((row, ri) =>
-    row.map((cell, ci) => igridCellHTML(cell, bed.id, ri, ci, cs))
+    row.map((cell, ci) => igridCellHTML(cell, bed.id, ri, ci, cs, isPolygon(bed) && !polygonCellInside(bed, ri, ci)))
   ).join('');
   const legend = (bed.plants || []).map(pName => {
     const pd = PLANT_DATA[pName]; if (!pd) return '';
@@ -2718,7 +3751,7 @@ function igridDrop(e) {
         igridDragSrc = null; rerenderIGrid(bed.id); return;
       }
       clearSpanFromGrid(bed.plantGrid, pr, pc);
-      if (canPlaceSpan(bed.plantGrid, pr, pc, rowSpan, colSpan, L, W)) {
+      if (canPlaceSpan(bed.plantGrid, pr, pc, rowSpan, colSpan, L, W, bed)) {
         placeSpanInGrid(bed.plantGrid, pr, pc, rowSpan, colSpan, emoji, srcPerSqft || 1);
       } else {
         showIgridToast(`Not enough space here — this plant needs a ${colSpan}×${rowSpan} ft area.`);
@@ -2737,11 +3770,11 @@ function igridDrop(e) {
     const pr = Math.max(0, Math.min(dst.row - Math.floor(srcRSpan / 2), L - srcRSpan));
     const pc = Math.max(0, Math.min(dst.col - Math.floor(srcCSpan / 2), W - srcCSpan));
     clearSpanFromGrid(bed.plantGrid, pr, pc);
-    if (canPlaceSpan(bed.plantGrid, pr, pc, srcRSpan, srcCSpan, L, W)) {
+    if (canPlaceSpan(bed.plantGrid, pr, pc, srcRSpan, srcCSpan, L, W, bed)) {
       placeSpanInGrid(bed.plantGrid, pr, pc, srcRSpan, srcCSpan, srcEmoji);
     } else {
       // Restore to source — destination doesn't have room
-      if (canPlaceSpan(bed.plantGrid, igridDragSrc.row, igridDragSrc.col, srcRSpan, srcCSpan, L, W))
+      if (canPlaceSpan(bed.plantGrid, igridDragSrc.row, igridDragSrc.col, srcRSpan, srcCSpan, L, W, bed))
         placeSpanInGrid(bed.plantGrid, igridDragSrc.row, igridDragSrc.col, srcRSpan, srcCSpan, srcEmoji);
       showIgridToast(`Not enough space here — this plant needs a ${srcCSpan}×${srcRSpan} ft area.`);
     }
@@ -2767,7 +3800,8 @@ function showIgridToast(msg) {
 function generatePlantsHTML() {
   const bedSections = beds.map(bed => {
     const plants  = bed.plants || [];
-    const sqftTotal = bed.w * bed.h;
+    const sqftTotal = Math.round(bedArea(bed) * 10) / 10;
+    const sizeLabel = isPolygon(bed) ? `${sqftTotal} sq ft` : `${bed.w}×${bed.h} ft`;
 
     const addRow = `
       <div style="display:flex;gap:6px;align-items:center;padding:8px 16px;border-bottom:1px solid #d4e4d4;background:#f8fcf8">
@@ -2777,7 +3811,7 @@ function generatePlantsHTML() {
 
     if (!plants.length) {
       return `<div class="report-bed">
-        <div class="report-bed-header"><h3>${bed.name}</h3><span>${bed.w}×${bed.h} ft</span></div>
+        <div class="report-bed-header"><h3>${bed.name}</h3><span>${sizeLabel}</span></div>
         ${addRow}
         <div class="report-bed-body"><p style="color:#888;font-size:13px;padding:4px 0">No plants yet — use the dropdown above to add some.</p></div>
       </div>`;
@@ -2837,7 +3871,7 @@ function generatePlantsHTML() {
     return `<div class="report-bed">
       <div class="report-bed-header">
         <h3>${bed.name} ${isPot ? '<span style="font-size:11px;font-weight:normal;background:rgba(193,68,14,0.15);border:1px solid #c1440e;border-radius:4px;padding:1px 6px;vertical-align:middle">🪴 pot</span>' : isGround ? '<span style="font-size:11px;font-weight:normal;background:rgba(58,125,68,0.2);border:1px solid #3a7d44;border-radius:4px;padding:1px 6px;vertical-align:middle">🌍 in-ground</span>' : ''}</h3>
-        <span>${bed.w} ft × ${bed.h} ft · ${sqftTotal} sq ft</span>
+        <span>${isPolygon(bed) ? `${sqftTotal} sq ft` : `${bed.w} ft × ${bed.h} ft · ${sqftTotal} sq ft`}</span>
       </div>
       ${addRow}
       <div class="report-bed-body">
@@ -2902,10 +3936,16 @@ function generateShoppingHTML() {
   beds.filter(b => b.type !== 'ground' && b.type !== 'pot').forEach(bed => {
     const m = calcMaterials(bed);
     for (let r = 0; r < m.runs; r++) {
-      pieces.push({ len: bed.h, label: `${bed.name} side`, bedName: bed.name, boardSize: m.boardSize });
-      pieces.push({ len: bed.h, label: `${bed.name} side`, bedName: bed.name, boardSize: m.boardSize });
-      pieces.push({ len: bed.w, label: `${bed.name} end`,  bedName: bed.name, boardSize: m.boardSize });
-      pieces.push({ len: bed.w, label: `${bed.name} end`,  bedName: bed.name, boardSize: m.boardSize });
+      if (m.polygon) {
+        m.cuts.forEach((len, i) => {
+          pieces.push({ len, label: `${bed.name} edge ${i + 1}`, bedName: bed.name, boardSize: m.boardSize });
+        });
+      } else {
+        pieces.push({ len: bed.h, label: `${bed.name} side`, bedName: bed.name, boardSize: m.boardSize });
+        pieces.push({ len: bed.h, label: `${bed.name} side`, bedName: bed.name, boardSize: m.boardSize });
+        pieces.push({ len: bed.w, label: `${bed.name} end`,  bedName: bed.name, boardSize: m.boardSize });
+        pieces.push({ len: bed.w, label: `${bed.name} end`,  bedName: bed.name, boardSize: m.boardSize });
+      }
     }
   });
 
@@ -2936,7 +3976,8 @@ function generateShoppingHTML() {
   const bedMats = beds.map(b => calcMaterials(b));
   const maxDepthIn = Math.max(...bedMats.map(m => m.actualDepthIn));
   const postLenIn  = Math.ceil(maxDepthIn) + 2; // 2" below grade
-  const totalPostIn  = beds.length * 4 * postLenIn;
+  const cornerCount = beds.reduce((s, b) => s + (isPolygon(b) ? b.points.length : 4), 0);
+  const totalPostIn  = cornerCount * postLenIn;
   const postsNeeded  = Math.ceil(totalPostIn / 96);
   const postsPerBuy  = Math.floor(96 / postLenIn);
 
@@ -2945,7 +3986,7 @@ function generateShoppingHTML() {
   const screwBoxes = Math.max(1, Math.ceil(totalRuns * 16 / 100));
 
   // Soil
-  const totalSoilCuFt = bedMats.reduce((s, m) => s + m.W * m.L * (m.depthIn / 12), 0);
+  const totalSoilCuFt = bedMats.reduce((s, m) => s + (m.soilCuFtNum != null ? m.soilCuFtNum : m.W * m.L * (m.depthIn / 12)), 0);
   const totalSoilCuYd = totalSoilCuFt / 27;
 
   // Costs
@@ -2992,7 +4033,7 @@ function generateShoppingHTML() {
     ? `<div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#78350f">
         💡 <strong>${sharedBoards.length} board${sharedBoards.length > 1 ? 's' : ''} shared across beds</strong> —
         pieces from different beds are cut from the same board, saving waste and money.
-        ${postsNeeded < beds.length ? `Also, ${postsNeeded} corner post${postsNeeded > 1 ? 's' : ''} (instead of ${beds.length}) cover all ${beds.length * 4} corners — each 4×4×8 yields ${postsPerBuy} corner posts.` : ''}
+        ${postsNeeded < beds.length ? `Also, ${postsNeeded} corner post${postsNeeded > 1 ? 's' : ''} (instead of ${beds.length}) cover all ${cornerCount} corners — each 4×4×8 yields ${postsPerBuy} corner posts.` : ''}
       </div>`
     : '';
 
@@ -3183,6 +4224,7 @@ function generateShoppingHTML() {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 initCanvas();
 renderLists();
+updateCalibReadout();
 setTimeout(loadLocalStoreInputs, 0); // restore saved store name/URL after DOM is ready
 
 // Resize canvas to fill its container whenever the window changes size
