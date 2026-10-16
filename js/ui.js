@@ -262,19 +262,52 @@ function addObstacle() {
   renderLists(); draw(); select(id, 'obstacle');
 }
 
+const SIDEBAR_KEY = 'sidebar-collapsed';
+const sidebarWideQuery = window.matchMedia('(min-width: 801px)');
+
+function isSidebarWide() {
+  return sidebarWideQuery.matches;
+}
+
+function applySidebarCollapsed(collapsed) {
+  const app = document.querySelector('.app');
+  app.classList.toggle('is-collapsed', collapsed);
+  const toggle = document.getElementById('sidebarToggle');
+  if (!toggle) return;
+  const open = !collapsed;
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.setAttribute('aria-label', open ? 'Collapse sidebar' : 'Expand sidebar');
+  toggle.title = open ? 'Collapse sidebar' : 'Expand sidebar';
+}
+
 function toggleSidebar() {
-  const s = document.querySelector('.sidebar');
-  s.classList.toggle('collapsed');
-  document.getElementById('sidebarExpandTab').style.display =
-    s.classList.contains('collapsed') ? 'flex' : 'none';
+  if (!isSidebarWide()) {
+    closeSidebar();
+    return;
+  }
+  const app = document.querySelector('.app');
+  const next = !app.classList.contains('is-collapsed');
+  applySidebarCollapsed(next);
+  localStorage.setItem(SIDEBAR_KEY, String(next));
 }
+
 function openSidebar() {
-  document.querySelector('.sidebar').classList.add('open');
-  document.getElementById('sidebarBackdrop').classList.add('visible');
+  document.querySelector('.app').classList.add('is-drawer');
 }
+
 function closeSidebar() {
-  document.querySelector('.sidebar').classList.remove('open');
-  document.getElementById('sidebarBackdrop').classList.remove('visible');
+  document.querySelector('.app').classList.remove('is-drawer');
+}
+
+function initSidebar() {
+  applySidebarCollapsed(isSidebarWide() && localStorage.getItem(SIDEBAR_KEY) === 'true');
+  sidebarWideQuery.addEventListener('change', () => {
+    closeSidebar();
+    if (isSidebarWide()) {
+      applySidebarCollapsed(document.querySelector('.app').classList.contains('is-collapsed'));
+    }
+  });
+  if (window.lucide) lucide.createIcons();
 }
 
 function duplicateSelected() {

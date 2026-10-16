@@ -4,115 +4,160 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🌱 Garden Planner - Layouts and Bed builder 🌱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
 <div class="app">
 
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
+
   <!-- ── Sidebar ── -->
-  <div class="sidebar">
-    <div class="sidebar-header">
-      <div>
-        <h1>🌱 Garden Planner</h1>
-        <p>Drag beds · Click to edit · Double-click to rename</p>
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <i data-lucide="sprout"></i>
       </div>
-      <div style="display:flex;gap:6px;align-items:flex-start">
-        <button class="help-btn" onclick="showTutorial()" title="Help / Getting started">?</button>
-        <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse sidebar">‹</button>
+      <div class="brand-copy">
+        <p class="title-medium">Garden Planner</p>
+        <p class="body-small">Drag beds · Click to edit</p>
       </div>
-    </div>
-    <div style="padding:10px 14px 0">
-      <button class="btn btn-danger" onclick="showNewGardenDialog()" style="width:100%">🌿 New Garden</button>
+      <button type="button" class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-expanded="true" aria-label="Collapse sidebar" title="Collapse sidebar">
+        <i data-lucide="chevrons-left" class="when-open"></i>
+        <i data-lucide="chevrons-right" class="when-closed"></i>
+        <i data-lucide="x" class="when-drawer"></i>
+      </button>
     </div>
 
-    <div class="section">
-      <h2>Garden Dimensions</h2>
-      <div class="input-row">
-        <label>Width</label>
-        <input type="number" id="gardenWidth" value="20" min="5" max="200">
-        <span>ft</span>
-      </div>
-      <div class="input-row">
-        <label>Length</label>
-        <input type="number" id="gardenHeight" value="18" min="5" max="200">
-        <span>ft</span>
-      </div>
-      <button class="btn btn-secondary" onclick="applyGardenSize()">Apply Size</button>
-      <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px">
-        <button class="btn btn-secondary" onclick="uploadPlot()">Upload plot</button>
-        <button class="btn btn-secondary" onclick="loadSamplePlot()">Load sample plot</button>
+    <div class="sidebar-scroll">
+      <button type="button" class="nav-btn" onclick="showNewGardenDialog()" title="New garden">
+        <i data-lucide="plus"></i>
+        <span class="label-large">New garden</span>
+      </button>
+
+      <p class="label-small">Garden</p>
+      <div class="panel-block">
+        <p class="title-small">Dimensions</p>
+        <div class="input-row">
+          <label>Width</label>
+          <input type="number" id="gardenWidth" value="20" min="5" max="200" aria-label="Width in feet">
+          <span>ft</span>
+        </div>
+        <div class="input-row">
+          <label>Length</label>
+          <input type="number" id="gardenHeight" value="18" min="5" max="200" aria-label="Length in feet">
+          <span>ft</span>
+        </div>
+        <button type="button" class="text-btn filled" onclick="applyGardenSize()">Apply size</button>
+        <button type="button" class="text-btn" onclick="uploadPlot()">Upload plot</button>
+        <button type="button" class="text-btn" onclick="loadSamplePlot()">Load sample plot</button>
         <p class="plot-note" id="calibReadout">No plot photo loaded.</p>
-        <label class="snap-toggle" style="margin-top:2px">
+        <label class="snap-toggle">
           <input type="checkbox" id="embedPhoto"> Include photo in save file
         </label>
-        <button class="btn btn-primary" onclick="addBed()">+ Add Bed</button>
-        <button class="btn btn-secondary" onclick="addGroundArea()">🌍 Add Ground Area</button>
-        <button class="btn btn-secondary" onclick="addPot()">🪴 Add Pot</button>
-        <button class="btn btn-secondary" onclick="addPlanter()">🍱 Add Planter</button>
       </div>
-    </div>
 
-    <div class="section">
-      <h2>Tools</h2>
-      <button class="btn btn-primary" onclick="openReport('plant')" style="margin-bottom:4px">🌱 Plant Organizer</button>
-      <button class="btn btn-secondary" onclick="openReport('shop')" style="margin-bottom:4px">🛒 Shopping List</button>
-      <button class="btn btn-secondary" onclick="openReport('build')">🪵 Bed Builder</button>
-    </div>
+      <button type="button" class="nav-btn" onclick="addBed()" title="Add bed">
+        <i data-lucide="square"></i>
+        <span class="label-large">Add bed</span>
+      </button>
+      <button type="button" class="nav-btn" onclick="addGroundArea()" title="Add ground area">
+        <i data-lucide="trees"></i>
+        <span class="label-large">Add ground area</span>
+      </button>
+      <button type="button" class="nav-btn" onclick="addPot()" title="Add pot">
+        <i data-lucide="flower-2"></i>
+        <span class="label-large">Add pot</span>
+      </button>
+      <button type="button" class="nav-btn" onclick="addPlanter()" title="Add planter">
+        <i data-lucide="rectangle-horizontal"></i>
+        <span class="label-large">Add planter</span>
+      </button>
+      <button type="button" class="nav-btn" onclick="addObstacle()" title="Add obstacle">
+        <i data-lucide="brick-wall"></i>
+        <span class="label-large">Add obstacle</span>
+      </button>
 
-    <div class="section">
-      <h2>My Plans</h2>
-      <button class="btn btn-secondary" onclick="printPlan()" style="margin-bottom:4px">🖨️ Print Plan</button>
-      <button class="btn btn-secondary" onclick="saveJSON()" style="margin-bottom:4px">💾 Save Plan</button>
-      <button class="btn btn-secondary" onclick="loadJSON()">📂 Load Plan</button>
-    </div>
+      <p class="label-small">Tools</p>
+      <button type="button" class="nav-btn" onclick="openReport('plant')" title="Plant organizer">
+        <i data-lucide="layout-grid"></i>
+        <span class="label-large">Plant organizer</span>
+      </button>
+      <button type="button" class="nav-btn" onclick="openReport('shop')" title="Shopping list">
+        <i data-lucide="shopping-cart"></i>
+        <span class="label-large">Shopping list</span>
+      </button>
+      <button type="button" class="nav-btn" onclick="openReport('build')" title="Bed builder">
+        <i data-lucide="hammer"></i>
+        <span class="label-large">Bed builder</span>
+      </button>
 
-    <div class="section">
-      <h2>Planting Areas</h2>
-      <div id="bedList"></div>
-    </div>
+      <p class="label-small">My plans</p>
+      <button type="button" class="nav-btn" onclick="printPlan()" title="Print plan">
+        <i data-lucide="printer"></i>
+        <span class="label-large">Print plan</span>
+      </button>
+      <button type="button" class="nav-btn" onclick="saveJSON()" title="Save plan">
+        <i data-lucide="save"></i>
+        <span class="label-large">Save plan</span>
+      </button>
+      <button type="button" class="nav-btn" onclick="loadJSON()" title="Load plan">
+        <i data-lucide="folder-open"></i>
+        <span class="label-large">Load plan</span>
+      </button>
 
-    <div class="section">
-      <h2>Obstacles</h2>
-      <div id="obstacleList"></div>
-      <button class="btn btn-secondary" onclick="addObstacle()" style="margin-top:6px">+ Add Obstacle</button>
-    </div>
+      <p class="label-small">Planting areas</p>
+      <div class="panel-block" id="bedList"></div>
 
-    <div class="section">
-      <h2>🏪 Local Store</h2>
-      <p style="font-size:11px;color:#888;margin-bottom:8px">Show a local garden centre or hardware store link inside your Shopping List &amp; Bed Builder.</p>
-      <div class="field">
-        <label>Store name</label>
-        <input type="text" id="localStoreName" placeholder="e.g. Ritchie Feed &amp; Seed" oninput="saveLocalStore()">
+      <p class="label-small">Obstacles</p>
+      <div class="panel-block" id="obstacleList"></div>
+
+      <p class="label-small">Local store</p>
+      <div class="panel-block">
+        <p class="body-small">Show a local garden centre or hardware store link inside your Shopping List and Bed Builder.</p>
+        <div class="field">
+          <label>Store name</label>
+          <input type="text" id="localStoreName" placeholder="e.g. Ritchie Feed &amp; Seed" oninput="saveLocalStore()">
+        </div>
+        <div class="field">
+          <label>Website URL</label>
+          <input type="text" id="localStoreUrl" placeholder="https://..." oninput="saveLocalStore()">
+        </div>
       </div>
-      <div class="field">
-        <label>Website URL</label>
-        <input type="text" id="localStoreUrl" placeholder="https://..." oninput="saveLocalStore()">
-      </div>
-    </div>
 
-    <div class="section">
-      <h2>Legend</h2>
-      <div class="legend">
-        <div class="legend-item">
-          <div class="legend-swatch" style="background:#8B5E3C"></div> Raised Bed
-        </div>
-        <div class="legend-item">
-          <div class="legend-swatch" style="background:#9c6644"></div> Planter
-        </div>
-        <div class="legend-item">
-          <div class="legend-swatch" style="background:#6aaa6b; opacity:0.65"></div> Obstacle
-        </div>
-        <div class="legend-item">
-          <div class="legend-swatch" style="background:#e8f5e0; border:1px solid #a0c8a0"></div> Open Garden
+      <p class="label-small">Legend</p>
+      <div class="panel-block">
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-swatch" style="background:#8B5E3C"></div> Raised Bed
+          </div>
+          <div class="legend-item">
+            <div class="legend-swatch" style="background:#9c6644"></div> Planter
+          </div>
+          <div class="legend-item">
+            <div class="legend-swatch" style="background:#6aaa6b; opacity:0.65"></div> Obstacle
+          </div>
+          <div class="legend-item">
+            <div class="legend-swatch" style="background:#e8f5e0; border:1px solid #a0c8a0"></div> Open Garden
+          </div>
         </div>
       </div>
+
+      <button type="button" class="nav-btn" onclick="showTutorial()" title="Help">
+        <i data-lucide="circle-help"></i>
+        <span class="label-large">Help</span>
+      </button>
     </div>
-  </div>
+  </aside>
 
   <!-- ── Canvas ── -->
   <div class="main">
     <div class="toolbar">
-      <button class="btn btn-secondary menu-btn" onclick="openSidebar()" title="Menu">☰ Menu</button>
+      <button type="button" class="menu-btn" id="menuBtn" onclick="openSidebar()" title="Open menu" aria-label="Open menu">
+        <i data-lucide="menu"></i>
+      </button>
       <div class="tool-group">
         <button type="button" class="tool-btn active" data-tool="select" onclick="setTool('select')">Select</button>
         <button type="button" class="tool-btn" data-tool="pan" onclick="setTool('pan')">Pan</button>
@@ -363,9 +408,7 @@
   </div>
 </div>
 
-<div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
-<button class="sidebar-expand-tab" id="sidebarExpandTab" onclick="toggleSidebar()" title="Expand sidebar">›</button>
-
+<script src="https://unpkg.com/lucide@0.544.0/dist/umd/lucide.min.js"></script>
 <script src="js/catalog.js"></script>
 <script src="js/plant_lookup.js"></script>
 <script src="js/state.js"></script>

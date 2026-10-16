@@ -1,4 +1,5 @@
 // ─── Init ─────────────────────────────────────────────────────────────────────
+initSidebar();
 initCanvas();
 renderLists();
 updateCalibReadout();
