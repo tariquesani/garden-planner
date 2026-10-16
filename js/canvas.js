@@ -431,23 +431,75 @@ function drawBed(b) {
   if (isPlanter) {
     const lenIn = Math.round(b.w * 12);
     const widIn = Math.round(b.h * 12);
-    const hasPlants = b.plants && b.plants.length && Math.min(w, h) > 36;
+    const icons = (b.plants || []).slice(0, 2)
+      .map(p => PLANT_DATA[p] && PLANT_DATA[p].emoji)
+      .filter(Boolean);
+    const shortSide = Math.min(w, h);
+    const nameFs = clamp(8, 13, shortSide / 3.2);
+    const sizeFs = clamp(7, 11, shortSide / 4.5);
+    const sizeLabel = `${lenIn}×${widIn}"`;
+
+    ctx.save();
+    roundRect(x, y, w, h, 5);
+    ctx.clip();
     ctx.fillStyle = '#fff';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `bold ${clamp(9, 13, Math.min(w, h) / 3)}px sans-serif`;
-    ctx.fillText(b.name, x + w / 2, y + h / 2 - (hasPlants ? 11 : 5));
-    ctx.font = `${clamp(8, 11, Math.min(w, h) / 4)}px sans-serif`;
-    ctx.globalAlpha = 0.8;
-    ctx.fillText(`${lenIn}×${widIn}"`, x + w / 2, y + h / 2 + (hasPlants ? 3 : 8));
-    ctx.globalAlpha = 1;
-    if (hasPlants) {
-      ctx.font = `${clamp(8, 11, Math.min(w, h) / 5)}px sans-serif`;
-      b.plants.slice(0, 2).forEach((p, i) => {
-        ctx.globalAlpha = 0.88;
-        ctx.fillText(p, x + w / 2, y + h / 2 + 16 + i * 13);
+    ctx.textBaseline = 'middle';
+
+    if (!icons.length) {
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${nameFs}px sans-serif`;
+      ctx.fillText(b.name, x + w / 2, y + h / 2 - 5);
+      ctx.font = `${sizeFs}px sans-serif`;
+      ctx.globalAlpha = 0.8;
+      ctx.fillText(sizeLabel, x + w / 2, y + h / 2 + 8);
+      ctx.globalAlpha = 1;
+    } else if (w >= h + 8) {
+      const pad = 6;
+      ctx.font = `bold ${nameFs}px sans-serif`;
+      const nameW = ctx.measureText(b.name).width;
+      ctx.font = `${sizeFs}px sans-serif`;
+      const sizeW = ctx.measureText(sizeLabel).width;
+      const labelW = Math.max(nameW, sizeW);
+      ctx.textAlign = 'left';
+      ctx.font = `bold ${nameFs}px sans-serif`;
+      ctx.fillText(b.name, x + pad, y + h * 0.38);
+      ctx.font = `${sizeFs}px sans-serif`;
+      ctx.globalAlpha = 0.8;
+      ctx.fillText(sizeLabel, x + pad, y + h * 0.72);
+      ctx.globalAlpha = 1;
+
+      const emojiFs = clamp(12, Math.round(shortSide * 0.62), 28);
+      const gap = emojiFs * 1.05;
+      const iconSpan = (icons.length - 1) * gap;
+      const areaLeft = x + pad + labelW + 8;
+      const areaRight = x + w - 6;
+      const cxIcons = (areaLeft + areaRight) / 2;
+      ctx.font = `${emojiFs}px sans-serif`;
+      ctx.textAlign = 'center';
+      icons.forEach((emoji, i) => {
+        ctx.globalAlpha = 0.95;
+        ctx.fillText(emoji, cxIcons - iconSpan / 2 + i * gap, y + h / 2);
       });
       ctx.globalAlpha = 1;
+    } else {
+      const emojiFs = clamp(12, Math.round(shortSide * 0.5), 28);
+      const gap = emojiFs * 1.05;
+      const iconSpan = (icons.length - 1) * gap;
+      ctx.textAlign = 'center';
+      ctx.font = `${emojiFs}px sans-serif`;
+      icons.forEach((emoji, i) => {
+        ctx.globalAlpha = 0.95;
+        ctx.fillText(emoji, x + w / 2 - iconSpan / 2 + i * gap, y + h * 0.32);
+      });
+      ctx.globalAlpha = 1;
+      ctx.font = `bold ${nameFs}px sans-serif`;
+      ctx.fillText(b.name, x + w / 2, y + h * 0.68);
+      ctx.font = `${sizeFs}px sans-serif`;
+      ctx.globalAlpha = 0.8;
+      ctx.fillText(sizeLabel, x + w / 2, y + h * 0.86);
+      ctx.globalAlpha = 1;
     }
+    ctx.restore();
   }
 
   // Name label backdrop strip
