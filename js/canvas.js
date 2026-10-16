@@ -283,8 +283,9 @@ function drawBed(b) {
   const cx = bx + w/2, cy = by + h/2;
   const rot = b.rotation || 0;
   const sel = b.id === selectedId;
-  const isPot    = b.type === 'pot';
-  const isGround = b.type === 'ground';
+  const isPot     = b.type === 'pot';
+  const isPlanter = b.type === 'planter';
+  const isGround  = b.type === 'ground';
 
   // Apply rotation transform around bed center
   ctx.save();
@@ -354,6 +355,16 @@ function drawBed(b) {
     ctx.lineWidth = sel ? 2.5 : 1.5;
     roundRect(x, y, w, h, 5); ctx.stroke();
     ctx.setLineDash([]);
+  } else if (isPlanter) {
+    const inset = Math.max(3, Math.min(w, h) * 0.12);
+    roundRect(x + inset, y + inset, Math.max(1, w - inset * 2), Math.max(1, h - inset * 2), 4);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = Math.max(1.5, inset * 0.35);
+    ctx.stroke();
+    if (sel) {
+      ctx.strokeStyle = '#ff9f0a'; ctx.lineWidth = 3;
+      roundRect(x, y, w, h, 5); ctx.stroke();
+    }
   } else {
     // Selection ring for raised beds
     if (sel) {
@@ -362,8 +373,8 @@ function drawBed(b) {
     }
   }
 
-  // Square-foot grid lines (raised + ground beds only — not pots)
-  if (!isPot) {
+  // Square-foot grid lines (raised + ground beds only — not pots or planters)
+  if (!isPot && !isPlanter) {
     ctx.save();
     ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
     ctx.strokeStyle = isGround ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.35)';
@@ -384,8 +395,8 @@ function drawBed(b) {
   }
 
   // Plant emojis from grid — draw first so name label sits on top
-  if (!b.plantGrid && b.plants?.length) initPlantGrid(b);
-  if (b.plantGrid) {
+  if (!isPlanter && !b.plantGrid && b.plants?.length) initPlantGrid(b);
+  if (!isPlanter && b.plantGrid) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     b.plantGrid.forEach((row, ri) => {
       row.forEach((cell, ci) => {
@@ -417,7 +428,30 @@ function drawBed(b) {
     ctx.globalAlpha = 1;
   }
 
+  if (isPlanter) {
+    const lenIn = Math.round(b.w * 12);
+    const widIn = Math.round(b.h * 12);
+    const hasPlants = b.plants && b.plants.length && Math.min(w, h) > 36;
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `bold ${clamp(9, 13, Math.min(w, h) / 3)}px sans-serif`;
+    ctx.fillText(b.name, x + w / 2, y + h / 2 - (hasPlants ? 11 : 5));
+    ctx.font = `${clamp(8, 11, Math.min(w, h) / 4)}px sans-serif`;
+    ctx.globalAlpha = 0.8;
+    ctx.fillText(`${lenIn}×${widIn}"`, x + w / 2, y + h / 2 + (hasPlants ? 3 : 8));
+    ctx.globalAlpha = 1;
+    if (hasPlants) {
+      ctx.font = `${clamp(8, 11, Math.min(w, h) / 5)}px sans-serif`;
+      b.plants.slice(0, 2).forEach((p, i) => {
+        ctx.globalAlpha = 0.88;
+        ctx.fillText(p, x + w / 2, y + h / 2 + 16 + i * 13);
+      });
+      ctx.globalAlpha = 1;
+    }
+  }
+
   // Name label backdrop strip
+  if (!isPlanter) {
   const hasGrid = b.plantGrid && b.plants && b.plants.length;
   const dimLabel = isGround ? `in-ground · ${b.w*b.h} sqft` : `${b.w}×${b.h} · ${b.w*b.h} sqft`;
   if (hasGrid) {
@@ -447,6 +481,7 @@ function drawBed(b) {
       });
       ctx.globalAlpha = 1;
     }
+  }
   }
 
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
@@ -521,6 +556,20 @@ function wrapText(text, cx, cy, maxW, lineH) {
 function clamp(min, max, val) { return Math.min(max, Math.max(min, val)); }
 
 // ─── Hit test ────────────────────────────────────────────────────────────────
+function applyDragRotation(pointerX, pointerY, shiftKey) {
+  const selItem = beds.find(b => b.id === selectedId) || obstacles.find(o => o.id === selectedId);
+  if (!selItem) return;
+  const cenX = ft(selItem.x) + ft(selItem.w) / 2;
+  const cenY = ft(selItem.y) + ft(selItem.h) / 2;
+  const angle = Math.atan2(pointerX - cenX, -(pointerY - cenY));
+  let newRot = rotateStartRot + (angle - rotateStartAngle);
+  if (shiftKey) newRot = Math.round(newRot / (Math.PI / 12)) * (Math.PI / 12);
+  selItem.rotation = newRot;
+  syncRotationField();
+  syncPositionFields();
+  draw();
+}
+
 function hitRotateHandle(px, py, item) {
   const w = ft(item.w), h = ft(item.h);
   const cx = ft(item.x) + w/2, cy = ft(item.y) + h/2;
@@ -593,7 +642,7 @@ canvas.addEventListener('mousedown', e => {
       return;
     }
   }
-  if (selItem && !isPolygon(selItem) && hitRotateHandle(wpx, wpy, selItem)) {
+  if (selItem && !isPolygon(selItem) && selItem.type !== 'pot' && hitRotateHandle(wpx, wpy, selItem)) {
     saveHistory();
     isRotating = true;
     const cen = { x: ft(selItem.x) + ft(selItem.w)/2, y: ft(selItem.y) + ft(selItem.h)/2 };
@@ -643,16 +692,7 @@ canvas.addEventListener('mousemove', e => {
     return;
   }
   if (isRotating) {
-    const selItem = beds.find(b => b.id === selectedId) || obstacles.find(o => o.id === selectedId);
-    if (selItem) {
-      const cenX = ft(selItem.x) + ft(selItem.w)/2, cenY = ft(selItem.y) + ft(selItem.h)/2;
-      const angle = Math.atan2(wpx - cenX, -(wpy - cenY));
-      let newRot = rotateStartRot + (angle - rotateStartAngle);
-      // Snap to 45° increments
-      newRot = Math.round(newRot / (Math.PI / 4)) * (Math.PI / 4);
-      selItem.rotation = newRot;
-      draw();
-    }
+    applyDragRotation(wpx, wpy, e.shiftKey);
   } else if (dragging && isPolygon(dragging)) {
     if (dragMode === 'vertex') {
       dragging.points[dragVertex] = pointerFeet(wpx, wpy);
@@ -811,7 +851,7 @@ canvas.addEventListener('mouseup', () => {
         return;
       }
     }
-    if (selItem && !isPolygon(selItem) && hitRotateHandle(wpx, wpy, selItem)) {
+    if (selItem && !isPolygon(selItem) && selItem.type !== 'pot' && hitRotateHandle(wpx, wpy, selItem)) {
       saveHistory();
       isRotating = true;
       const cen = { x: ft(selItem.x) + ft(selItem.w)/2, y: ft(selItem.y) + ft(selItem.h)/2 };
@@ -883,17 +923,9 @@ canvas.addEventListener('mouseup', () => {
     }
 
     if (isRotating) {
-      const selItem = beds.find(b => b.id === selectedId) || obstacles.find(o => o.id === selectedId);
-      if (selItem) {
-        const rr = canvas.getBoundingClientRect();
-        const { x: wpx, y: wpy } = screenToWorld(t.clientX - rr.left, t.clientY - rr.top);
-        const cenX = ft(selItem.x) + ft(selItem.w)/2, cenY = ft(selItem.y) + ft(selItem.h)/2;
-        const angle = Math.atan2(wpx - cenX, -(wpy - cenY));
-        let newRot = rotateStartRot + (angle - rotateStartAngle);
-        newRot = Math.round(newRot / (Math.PI / 4)) * (Math.PI / 4);
-        selItem.rotation = newRot;
-        draw();
-      }
+      const rr = canvas.getBoundingClientRect();
+      const { x: wpx, y: wpy } = screenToWorld(t.clientX - rr.left, t.clientY - rr.top);
+      applyDragRotation(wpx, wpy, false);
     } else if (dragging) {
       canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY, bubbles: true }));
     } else if (isPanning) {

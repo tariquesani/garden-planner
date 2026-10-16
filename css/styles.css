@@ -181,6 +181,8 @@
     .tool-btn.active { background: #2d6a30; color: #fff; border-color: #2d6a30; }
     .tool-btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .plot-note { font-size: 11px; color: #4a6b4b; line-height: 1.4; margin-top: 6px; }
+    .preset-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+    .preset-row .btn { width: auto; margin-top: 0; }
     .igrid-cell.outside {
       background: repeating-linear-gradient(45deg, rgba(0,0,0,0.18), rgba(0,0,0,0.18) 4px, rgba(0,0,0,0.05) 4px, rgba(0,0,0,0.05) 8px);
       cursor: not-allowed;

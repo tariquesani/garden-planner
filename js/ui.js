@@ -22,36 +22,71 @@ function syncPanel() {
   _propHistorySaved = false; // reset so next edit on this item saves a fresh snapshot
   const isBed = isBedSelected();
 
-  const isGround = isBed && item.type === 'ground';
-  const isPot    = isBed && item.type === 'pot';
-  const poly     = isBed && isPolygon(item);
+  const isGround  = isBed && item.type === 'ground';
+  const isPot     = isBed && item.type === 'pot';
+  const isPlanter = isBed && item.type === 'planter';
+  const poly      = isBed && isPolygon(item);
   document.getElementById('panelTitle').textContent =
-    isPot ? '🪴 Pot' : isGround ? '🌍 Ground Area' : isBed ? '🌿 Bed Details' : '⬛ Obstacle Details';
+    isPlanter ? '🍱 Planter' : isPot ? '🪴 Pot' : isGround ? '🌍 Ground Area' : isBed ? '🌿 Bed Details' : '⬛ Obstacle Details';
   document.getElementById('propName').value = item.name;
   const _vp = visualPos(item);
   document.getElementById('propX').value    = Math.round(_vp.x * 10) / 10;
   document.getElementById('propY').value    = Math.round(_vp.y * 10) / 10;
-  if (!isPot && !poly) {
+  if (!isPot && !isPlanter && !poly) {
     document.getElementById('propW').value = item.w;
     document.getElementById('propH').value = item.h;
   }
 
-  document.getElementById('sizeRow').style.display     = (isPot || poly) ? 'none' : '';
-  document.getElementById('posRow').style.display      = poly ? 'none' : '';
-  document.getElementById('polySection').style.display = poly ? '' : 'none';
-  document.getElementById('potSection').style.display  = isPot ? '' : 'none';
+  document.getElementById('sizeRow').style.display        = (isPot || isPlanter || poly) ? 'none' : '';
+  document.getElementById('posRow').style.display         = poly ? 'none' : '';
+  document.getElementById('polySection').style.display    = poly ? '' : 'none';
+  document.getElementById('potSection').style.display     = isPot ? '' : 'none';
+  document.getElementById('planterSection').style.display = isPlanter ? '' : 'none';
+  document.getElementById('rotRow').style.display         = (!poly && !isPot) ? '' : 'none';
   if (poly) updatePolyPanel();
+  if (isPlanter) {
+    document.getElementById('propPlanterL').value = Math.round(item.w * 12);
+    document.getElementById('propPlanterW').value = Math.round(item.h * 12);
+    syncPlanterPreset();
+  }
+  if (!poly && !isPot) document.getElementById('propRot').value = rotationDegrees(item.rotation);
   document.getElementById('plantsSection').style.display = isBed ? '' : 'none';
   document.getElementById('organizerRow').style.display  = isBed ? '' : 'none';
   document.getElementById('notesSection').style.display  = isBed ? '' : 'none';
-  document.getElementById('depthSection').style.display  = (isBed && !isGround && !isPot) ? '' : 'none';
+  document.getElementById('depthSection').style.display  = (isBed && !isGround && !isPot && !isPlanter) ? '' : 'none';
 
   if (isBed) {
     document.getElementById('propNotes').value = item.notes || '';
-    if (!isGround && !isPot) document.getElementById('propDepth').value = item.depthIn || 12;
+    if (!isGround && !isPot && !isPlanter) document.getElementById('propDepth').value = item.depthIn || 12;
     if (isPot) document.getElementById('propDiam').value = item.diam || 1;
     renderPlantTags(item);
   }
+}
+
+function rotationDegrees(rot) {
+  let deg = ((rot || 0) * 180 / Math.PI) % 360;
+  if (deg < 0) deg += 360;
+  if (deg >= 359.5) deg = 0;
+  return Math.round(deg);
+}
+
+function syncRotationField() {
+  const item = getSelected();
+  const el = document.getElementById('propRot');
+  if (!item || !el || isPolygon(item) || item.type === 'pot') return;
+  el.value = rotationDegrees(item.rotation);
+}
+
+function updateRotation(deg) {
+  const item = getSelected();
+  if (!item || isPolygon(item) || item.type === 'pot') return;
+  const n = Number(deg);
+  if (!Number.isFinite(n)) return;
+  if (!_propHistorySaved) { saveHistory(); _propHistorySaved = true; }
+  const wrapped = ((n % 360) + 360) % 360;
+  item.rotation = wrapped * Math.PI / 180;
+  syncPositionFields();
+  draw(); renderLists();
 }
 
 // Convert between raw anchor (b.x/b.y = unrotated top-left) and
@@ -110,7 +145,7 @@ function addPlant() {
   const bed = beds.find(b => b.id === selectedId); if (!bed) return;
 
   const pd = PLANT_DATA[p];
-  if (pd) {
+  if (pd && bed.type !== 'planter') {
     const { rowSpan, colSpan } = getPlantSpan(pd.sqft);
     const L = Math.floor(bed.h), W = Math.floor(bed.w);
     if (L < rowSpan || W < colSpan) {
@@ -123,7 +158,7 @@ function addPlant() {
   if (!bed.plants.includes(p)) {
     saveHistory();
     bed.plants.push(p);
-    addPlantToGrid(bed, p);
+    if (bed.type !== 'planter') addPlantToGrid(bed, p);
     renderPlantTags(bed); draw();
   }
   sel.value = '';
@@ -168,6 +203,50 @@ function addPot() {
   select(id, 'bed'); renderLists(); draw();
 }
 
+function addPlanter() {
+  saveHistory();
+  const id = 'planter' + nextId++;
+  beds.push({ id, name:'Planter', x:2, y:2, w:3, h:1, color:'#9c6644', type:'planter', plants:[], notes:'' });
+  select(id, 'bed'); renderLists(); draw();
+  const nameEl = document.getElementById('propName');
+  if (nameEl) { nameEl.focus(); nameEl.select(); }
+}
+
+function updatePlanterInches(axis, inches) {
+  const bed = beds.find(b => b.id === selectedId);
+  if (!bed || bed.type !== 'planter' || (axis !== 'w' && axis !== 'h')) return;
+  const n = Number(inches);
+  if (!Number.isFinite(n) || n < 4 || n > 240) return;
+  if (!_propHistorySaved) { saveHistory(); _propHistorySaved = true; }
+  bed[axis] = n / 12;
+  syncPlanterPreset();
+  draw(); renderLists();
+}
+
+function applyPlanterPreset(lengthIn, widthIn) {
+  const bed = beds.find(b => b.id === selectedId);
+  if (!bed || bed.type !== 'planter') return;
+  if (!_propHistorySaved) { saveHistory(); _propHistorySaved = true; }
+  bed.w = lengthIn / 12;
+  bed.h = widthIn / 12;
+  document.getElementById('propPlanterL').value = lengthIn;
+  document.getElementById('propPlanterW').value = widthIn;
+  syncPlanterPreset();
+  draw(); renderLists();
+}
+
+function syncPlanterPreset() {
+  const bed = getSelected();
+  if (!bed || bed.type !== 'planter') return;
+  const lengthIn = Math.round(bed.w * 12);
+  const widthIn = Math.round(bed.h * 12);
+  document.querySelectorAll('.planter-preset').forEach(btn => {
+    const on = +btn.dataset.l === lengthIn && +btn.dataset.w === widthIn;
+    btn.classList.toggle('btn-primary', on);
+    btn.classList.toggle('btn-secondary', !on);
+  });
+}
+
 function updatePotDiam(val) {
   const bed = beds.find(b => b.id === selectedId);
   if (!bed || bed.type !== 'pot') return;
@@ -205,7 +284,7 @@ function duplicateSelected() {
   const isObs = obstacles.find(o => o.id === selectedId);
   if (isBed) {
     const orig = beds.find(b => b.id === selectedId);
-    const newId = (orig.type === 'pot' ? 'pot' : orig.type === 'ground' ? 'area' : 'bed') + nextId++;
+    const newId = (orig.type === 'planter' ? 'planter' : orig.type === 'pot' ? 'pot' : orig.type === 'ground' ? 'area' : 'bed') + nextId++;
     const copy = { ...orig, id: newId, x: orig.x + 1, y: orig.y + 1,
                    plants: [...(orig.plants || [])], notes: orig.notes || '', plantGrid: null };
     if (orig.points) {
@@ -271,6 +350,14 @@ function suggestLayout() {
 }
 
 // ─── Sidebar lists ────────────────────────────────────────────────────────────
+function bedListSize(b) {
+  if (b.type === 'pot') return `${b.diam * 12}" pot`;
+  if (b.type === 'planter') return `${Math.round(b.w * 12)}×${Math.round(b.h * 12)}" planter`;
+  if (isPolygon(b)) return `${bedArea(b).toFixed(1)} sq ft · ${b.points.length} sides`;
+  if (b.type === 'ground') return `${b.w}×${b.h} ft · in-ground`;
+  return `${b.w}×${b.h} ft`;
+}
+
 function renderLists() {
   const bedList = document.getElementById('bedList');
   bedList.innerHTML = '';
@@ -283,7 +370,7 @@ function renderLists() {
           <div class="color-dot" style="background:${b.color}"></div>
           <span class="list-item-name">${b.name}</span>
         </div>
-        <span class="list-item-sub">${b.type === 'pot' ? `${b.diam * 12}" pot` : isPolygon(b) ? `${bedArea(b).toFixed(1)} sq ft · ${b.points.length} sides` : b.type === 'ground' ? `${b.w}×${b.h} ft · in-ground` : `${b.w}×${b.h} ft`}</span>
+        <span class="list-item-sub">${bedListSize(b)}</span>
       </div>
       <div class="list-item-sub" style="margin-top:3px">${(b.plants||[]).join(', ') || '—'}</div>
     `;

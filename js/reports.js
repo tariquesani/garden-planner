@@ -432,8 +432,8 @@ function calcMaterials(bed) {
 
 function generateBuildHTML() {
   let grandTotal = 0;
-  const raisedBeds  = beds.filter(b => b.type !== 'ground' && b.type !== 'pot');
-  const nonRaised   = beds.filter(b => b.type === 'ground' || b.type === 'pot');
+  const raisedBeds  = beds.filter(b => b.type !== 'ground' && b.type !== 'pot' && b.type !== 'planter');
+  const nonRaised   = beds.filter(b => b.type === 'ground' || b.type === 'pot' || b.type === 'planter');
 
   const bedSections = raisedBeds.map(bed => {
     const m = calcMaterials(bed);
@@ -513,7 +513,7 @@ function generateBuildHTML() {
 
   const totalSqft = Math.round(raisedBeds.reduce((s, b) => s + bedArea(b), 0) * 10) / 10;
   const groundNote = nonRaised.length
-    ? `<p style="font-size:12px;color:#666;margin-top:8px">🌍 ${nonRaised.length} ground area${nonRaised.length > 1 ? 's' : ''}/pot${nonRaised.length > 1 ? 's' : ''} not shown here — no lumber needed. See Plant Organizer for planting details.</p>`
+    ? `<p style="font-size:12px;color:#666;margin-top:8px">🌍 ${nonRaised.length} ground area${nonRaised.length > 1 ? 's' : ''}, pot${nonRaised.length > 1 ? 's' : ''}, or planter${nonRaised.length > 1 ? 's' : ''} not shown here — no lumber needed. See Plant Organizer for planting details.</p>`
     : '';
   const summary = `
   <div class="report-summary">
@@ -1033,8 +1033,9 @@ function generatePlantsHTML() {
         </div>` : '';
 
     // Grid (interactive)
-    const isGround = bed.type === 'ground';
-    const isPot    = bed.type === 'pot';
+    const isGround  = bed.type === 'ground';
+    const isPot     = bed.type === 'pot';
+    const isPlanter = bed.type === 'planter';
 
     // Per-plant detail rows
     const plantRows = plants.map(pName => {
@@ -1054,30 +1055,30 @@ function generatePlantsHTML() {
           <div class="plant-meta">
             <span class="pill">📐 ${pd.sqft >= 1 ? pd.sqft + ' sq ft/plant' : perSqft + '/sq ft'}</span>
             <span class="pill">↔ ${pd.spacing}" apart</span>
-            ${(!isGround && !isPot) ? `<span class="pill">⬇ ${pd.depthIn}" soil</span>` : ''}
+            ${(!isGround && !isPot && !isPlanter) ? `<span class="pill">⬇ ${pd.depthIn}" soil</span>` : ''}
             <span class="pill">☀ ${pd.sun}</span>
             <span class="pill">💧 ${pd.water}</span>
             ${trellisTag}
           </div>
           ${(cTags || aTags) ? `<div class="plant-meta">${cTags}${aTags}</div>` : ''}
-          <div class="plant-notes">${countLabel} in this ${sqftTotal} sq ft ${isPot ? 'pot' : isGround ? 'ground area' : 'bed'}. ${pd.notes}</div>
+          <div class="plant-notes">${countLabel} in this ${sqftTotal} sq ft ${isPlanter ? 'planter' : isPot ? 'pot' : isGround ? 'ground area' : 'bed'}. ${pd.notes}</div>
         </div>
       </div>`;
     }).join('');
 
     return `<div class="report-bed">
       <div class="report-bed-header">
-        <h3>${bed.name} ${isPot ? '<span style="font-size:11px;font-weight:normal;background:rgba(193,68,14,0.15);border:1px solid #c1440e;border-radius:4px;padding:1px 6px;vertical-align:middle">🪴 pot</span>' : isGround ? '<span style="font-size:11px;font-weight:normal;background:rgba(58,125,68,0.2);border:1px solid #3a7d44;border-radius:4px;padding:1px 6px;vertical-align:middle">🌍 in-ground</span>' : ''}</h3>
-        <span>${isPolygon(bed) ? `${sqftTotal} sq ft` : `${bed.w} ft × ${bed.h} ft · ${sqftTotal} sq ft`}</span>
+        <h3>${bed.name} ${isPlanter ? '<span style="font-size:11px;font-weight:normal;background:rgba(156,102,68,0.18);border:1px solid #9c6644;border-radius:4px;padding:1px 6px;vertical-align:middle">🍱 planter</span>' : isPot ? '<span style="font-size:11px;font-weight:normal;background:rgba(193,68,14,0.15);border:1px solid #c1440e;border-radius:4px;padding:1px 6px;vertical-align:middle">🪴 pot</span>' : isGround ? '<span style="font-size:11px;font-weight:normal;background:rgba(58,125,68,0.2);border:1px solid #3a7d44;border-radius:4px;padding:1px 6px;vertical-align:middle">🌍 in-ground</span>' : ''}</h3>
+        <span>${isPlanter ? `${Math.round(bed.w * 12)}×${Math.round(bed.h * 12)} in · ${sqftTotal} sq ft` : isPolygon(bed) ? `${sqftTotal} sq ft` : `${bed.w} ft × ${bed.h} ft · ${sqftTotal} sq ft`}</span>
       </div>
       ${addRow}
       <div class="report-bed-body">
         ${alertsHTML}${companionsHTML}
-        <div class="report-section">
+        ${isPlanter ? '' : `<div class="report-section">
           <h4>🗺 Square-Foot Layout (drag to rearrange)</h4>
           <p style="font-size:11px;color:#aaa;margin:-2px 0 8px">Drag palette emojis onto cells to paint. Double-click (or double-tap) a plant to remove it.</p>
           ${renderInteractiveGrid(bed)}
-        </div>
+        </div>`}
         <div class="report-section">
           <h4>🌿 Plant Details</h4>
           ${plantRows}
@@ -1105,7 +1106,7 @@ function addPlantFromOrganizer(bedId) {
   const p = sel.value; if (!p) return;
   const bed = beds.find(b => b.id === bedId); if (!bed) return;
   const pd = PLANT_DATA[p];
-  if (pd) {
+  if (pd && bed.type !== 'planter') {
     const { rowSpan, colSpan } = getPlantSpan(pd.sqft);
     const L = Math.floor(bed.h), W = Math.floor(bed.w);
     if (L < rowSpan || W < colSpan) {
@@ -1117,7 +1118,7 @@ function addPlantFromOrganizer(bedId) {
   if (!bed.plants.includes(p)) {
     saveHistory();
     bed.plants.push(p);
-    addPlantToGrid(bed, p);
+    if (bed.type !== 'planter') addPlantToGrid(bed, p);
     draw();
   }
   sel.value = '';
@@ -1130,7 +1131,7 @@ function generateShoppingHTML() {
 
   // Collect every cut piece needed across raised beds only (ground areas need no lumber)
   const pieces = [];
-  beds.filter(b => b.type !== 'ground' && b.type !== 'pot').forEach(bed => {
+  beds.filter(b => b.type !== 'ground' && b.type !== 'pot' && b.type !== 'planter').forEach(bed => {
     const m = calcMaterials(bed);
     for (let r = 0; r < m.runs; r++) {
       if (m.polygon) {
